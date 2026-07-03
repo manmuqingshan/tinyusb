@@ -716,7 +716,9 @@ bool cdch_xfer_cb(uint8_t daddr, uint8_t ep_addr, xfer_result_t event, uint32_t 
 //--------------------------------------------------------------------+
 static bool open_ep_stream_pair(cdch_interface_t *p_cdc, tusb_desc_endpoint_t const *desc_ep) {
   for (size_t i = 0; i < 2; i++) {
-    TU_ASSERT(TUSB_DESC_ENDPOINT == desc_ep->bDescriptorType && TUSB_XFER_BULK == desc_ep->bmAttributes.xfer, 0);
+    // pin bLength so tu_desc_next() below cannot walk the second endpoint past a caller-checked bound
+    TU_ASSERT(sizeof(tusb_desc_endpoint_t) == desc_ep->bLength &&
+              TUSB_DESC_ENDPOINT == desc_ep->bDescriptorType && TUSB_XFER_BULK == desc_ep->bmAttributes.xfer, 0);
     TU_ASSERT(tuh_edpt_open(p_cdc->daddr, desc_ep));
     const uint8_t     ep_dir = tu_edpt_dir(desc_ep->bEndpointAddress);
     tu_edpt_stream_t *stream = (ep_dir == TUSB_DIR_IN) ? &p_cdc->stream.rx : &p_cdc->stream.tx;
@@ -1031,7 +1033,8 @@ static uint16_t acm_open(uint8_t daddr, const tusb_desc_interface_t *itf_desc, u
 
   // Open notification endpoint of control interface if any
   if (itf_desc->bNumEndpoints == 1) {
-    TU_ASSERT(tu_desc_in_bounds(p_desc, desc_end), 0);
+    // whole endpoint descriptor must fit: tuh_edpt_open reads the full struct regardless of bLength
+    TU_ASSERT(p_desc + sizeof(tusb_desc_endpoint_t) <= desc_end, 0);
     TU_ASSERT(TUSB_DESC_ENDPOINT == tu_desc_type(p_desc), 0);
     const tusb_desc_endpoint_t *desc_ep = (const tusb_desc_endpoint_t *)p_desc;
     TU_ASSERT(tuh_edpt_open(daddr, desc_ep), 0);
@@ -1041,13 +1044,13 @@ static uint16_t acm_open(uint8_t daddr, const tusb_desc_interface_t *itf_desc, u
   }
 
   //------------- Data Interface (if any) -------------//
-  if (tu_desc_in_bounds(p_desc, desc_end) && TUSB_DESC_INTERFACE == tu_desc_type(p_desc)) {
+  if (p_desc + sizeof(tusb_desc_interface_t) <= desc_end && TUSB_DESC_INTERFACE == tu_desc_type(p_desc)) {
     const tusb_desc_interface_t *data_itf = (const tusb_desc_interface_t *)p_desc;
     if (data_itf->bInterfaceClass == TUSB_CLASS_CDC_DATA) {
       p_desc = tu_desc_next(p_desc); // next to endpoint descriptor
 
       // data endpoints expected to be in pairs, make sure both fit before reading them
-      TU_ASSERT((uint16_t)(desc_end - p_desc) >= 2 * sizeof(tusb_desc_endpoint_t), 0);
+      TU_ASSERT(p_desc + 2 * sizeof(tusb_desc_endpoint_t) <= desc_end, 0);
       TU_ASSERT(open_ep_stream_pair(p_cdc, (const tusb_desc_endpoint_t *)p_desc), 0);
       p_desc += data_itf->bNumEndpoints * sizeof(tusb_desc_endpoint_t);
     }
