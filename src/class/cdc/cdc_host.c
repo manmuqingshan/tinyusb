@@ -1040,19 +1040,21 @@ static uint16_t acm_open(uint8_t daddr, const tusb_desc_interface_t *itf_desc, u
     TU_ASSERT(tuh_edpt_open(daddr, desc_ep), 0);
     p_cdc->ep_notif = desc_ep->bEndpointAddress;
 
-    p_desc = tu_desc_next(p_desc);
+    // advance by the fixed struct size, not device-supplied bLength, so p_desc stays inside the checked window
+    p_desc += sizeof(tusb_desc_endpoint_t);
   }
 
   //------------- Data Interface (if any) -------------//
   if (p_desc + sizeof(tusb_desc_interface_t) <= desc_end && TUSB_DESC_INTERFACE == tu_desc_type(p_desc)) {
     const tusb_desc_interface_t *data_itf = (const tusb_desc_interface_t *)p_desc;
     if (data_itf->bInterfaceClass == TUSB_CLASS_CDC_DATA) {
-      p_desc = tu_desc_next(p_desc); // next to endpoint descriptor
+      p_desc += sizeof(tusb_desc_interface_t); // fixed struct size to endpoint descriptor, not device bLength
 
-      // data endpoints expected to be in pairs, make sure both fit before reading them
+      // open_ep_stream_pair consumes exactly two endpoints; require that count and that both fit before reading them
+      TU_ASSERT(data_itf->bNumEndpoints == 2, 0);
       TU_ASSERT(p_desc + 2 * sizeof(tusb_desc_endpoint_t) <= desc_end, 0);
       TU_ASSERT(open_ep_stream_pair(p_cdc, (const tusb_desc_endpoint_t *)p_desc), 0);
-      p_desc += data_itf->bNumEndpoints * sizeof(tusb_desc_endpoint_t);
+      p_desc += 2 * sizeof(tusb_desc_endpoint_t);
     }
   }
 
