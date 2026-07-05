@@ -378,7 +378,7 @@ TU_ATTR_ALWAYS_INLINE static inline usbd_class_driver_t const * get_driver(uint8
     driver = &_app_driver[drvid];
   } else{
     drvid -= _app_driver_count;
-    if (drvid < BUILTIN_DRIVER_COUNT) {
+    if (BUILTIN_DRIVER_COUNT > 0 && drvid < BUILTIN_DRIVER_COUNT) {
       driver = &_usbd_driver[drvid];
     }
   }
