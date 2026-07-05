@@ -199,6 +199,10 @@ static uint8_t _gtb_blocks(const uint8_t* desc, uint16_t len, uint8_t idx,
   return count;
 }
 
+static bool _gtb_desc_valid(const uint8_t* desc, uint16_t len) {
+  return desc != NULL && len >= TUD_MIDI2_GTB_DESC_LEN(1);
+}
+
 // GTB descriptor source: the single source of truth for block topology.
 // Override to expose multiple Group Terminal Blocks with independent
 // directions and group spans.
@@ -219,6 +223,7 @@ static inline uint8_t _itf_idx(const midi2d_interface_t* p_midi) {
 static uint8_t _gtb_block_count(midi2d_interface_t* p_midi) {
   uint16_t len = 0;
   const uint8_t* gtb = tud_midi2_gtb_desc_cb(_itf_idx(p_midi), &len);
+  TU_ASSERT(_gtb_desc_valid(gtb, len), 0);
   return _gtb_blocks(gtb, len, 0xFF, NULL, NULL, NULL);
 }
 
@@ -397,6 +402,7 @@ static void _nego_send_fb_info(midi2d_interface_t* p_midi, uint8_t fb_idx) {
   // Derive direction and group span for this block from the GTB descriptor.
   uint16_t gtb_len = 0;
   const uint8_t* gtb = tud_midi2_gtb_desc_cb(_itf_idx(p_midi), &gtb_len);
+  TU_ASSERT(_gtb_desc_valid(gtb, gtb_len),);
   uint8_t type = 0x00, first_group = 0, num_groups = (uint8_t) CFG_TUD_MIDI2_NUM_GROUPS;
   _gtb_blocks(gtb, gtb_len, fb_idx, &type, &first_group, &num_groups);
 
@@ -801,6 +807,7 @@ bool midi2d_control_xfer_cb(uint8_t rhport, uint8_t stage, const tusb_control_re
 
       uint16_t gtb_len = 0;
       const uint8_t* gtb = tud_midi2_gtb_desc_cb(idx, &gtb_len);
+      TU_ASSERT(_gtb_desc_valid(gtb, gtb_len), false);
 
       uint16_t len = request->wLength;
       if (len > gtb_len) {
