@@ -1022,8 +1022,11 @@ static uint16_t acm_open(uint8_t daddr, const tusb_desc_interface_t *itf_desc, u
   p_desc = tu_desc_next(p_desc);
 
   // Communication Functional Descriptors
-  while ((p_desc < desc_end) && (TUSB_DESC_CS_INTERFACE == tu_desc_type(p_desc))) {
-    if (CDC_FUNC_DESC_ABSTRACT_CONTROL_MANAGEMENT == cdc_functional_desc_typeof(p_desc)) {
+  // need the 3-byte header (bLength/bDescriptorType/bDescriptorSubType) in bounds before reading it, and a
+  // bLength >= 3 both keeps those reads valid and stops a zero-length descriptor from spinning the walk
+  while (p_desc + 3 <= desc_end && TUSB_DESC_CS_INTERFACE == tu_desc_type(p_desc) && tu_desc_len(p_desc) >= 3) {
+    if (CDC_FUNC_DESC_ABSTRACT_CONTROL_MANAGEMENT == cdc_functional_desc_typeof(p_desc) &&
+        p_desc + sizeof(cdc_desc_func_acm_t) <= desc_end) {
       // save ACM bmCapabilities
       p_cdc->acm.capability = ((cdc_desc_func_acm_t const *) p_desc)->bmCapabilities;
     }
