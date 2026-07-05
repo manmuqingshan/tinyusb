@@ -81,7 +81,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   size_t n = size < sizeof(ntb->data) ? size : sizeof(ntb->data);
   memset(ntb->data, 0, sizeof(ntb->data));
   memcpy(ntb->data, data, n);
-  recv_validate_datagram(ntb, (uint32_t) size);
+  recv_validate_datagram(ntb, (uint32_t) n);
   free(ntb);
   return 0;
 }
