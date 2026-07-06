@@ -240,6 +240,15 @@
 #define OPT_MODE_SPEED_MASK     0xff00u
 
 //--------------------------------------------------------------------+
+// Descriptor Validation Level
+// How much the stack hardens itself against mal-configured or hostile devices, traded against code size.
+// Higher levels add more checks; set CFG_TUD_VALIDATION_LEVEL / CFG_TUH_VALIDATION_LEVEL to pick one.
+//--------------------------------------------------------------------+
+#define TUSB_VALIDATION_NONE   0 ///< trusted devices only, minimal code size
+#define TUSB_VALIDATION_BASIC  1 ///< default: mal-configured devices, no OOB reads / zero-length loops
+#define TUSB_VALIDATION_STRICT 2 ///< reject malformed/hostile descriptors, stricter class validation
+
+//--------------------------------------------------------------------+
 // Include tusb_config.h
 //--------------------------------------------------------------------+
 
@@ -693,6 +702,10 @@
 
   #ifndef CFG_TUH_ENUMERATION_BUFSIZE
     #define CFG_TUH_ENUMERATION_BUFSIZE 256
+  #endif
+
+  #ifndef CFG_TUH_VALIDATION_LEVEL
+    #define CFG_TUH_VALIDATION_LEVEL TUSB_VALIDATION_BASIC
   #endif
 #endif // CFG_TUH_ENABLED
 
