@@ -12,6 +12,7 @@ Bias toward caution over speed. For trivial tasks, use judgment.
 - **Simplicity** — no features, abstractions, flexibility, or error handling beyond what was asked. If 200 lines could be 50, rewrite.
 - **Surgical changes** — touch only what the task requires; match existing style; don't refactor working code; mention unrelated dead code rather than deleting it. Remove only orphans *your* changes created.
 - **Goal-driven** — turn tasks into verifiable goals ("write failing test, make it pass"). For multi-step work, state a brief `step → verify` plan.
+- **Worktrees** — default to a git worktree (`git worktree add`) for any branch or multi-step work; never switch the shared primary checkout's branch. Sessions run concurrently: switching the primary checkout mid-flight disrupts other sessions and can silently point a review, build, or commit at the wrong diff. Only trivial one-shot fixes may skip this.
 
 ## Ground Rules
 
