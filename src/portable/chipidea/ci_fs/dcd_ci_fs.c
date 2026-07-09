@@ -175,6 +175,17 @@ static void process_tokdne(uint8_t rhport)
     return;
   }
   const unsigned length = ep->length;
+
+  /* Transfer is complete. For OUT, a multi-packet transfer speculatively arms the
+   * sibling (even/odd) BDT to avoid NAK. When the transfer ends early - e.g. the host
+   * sends a short packet before filling both buffers - that sibling is left armed
+   * (own=1). A leftover armed BDT desyncs the even/odd ping-pong so the next OUT
+   * packet lands in the wrong buffer half (buffer + max_packet_size instead of
+   * buffer), making the stack read stale data. Disarm it here. */
+  if (dir == TUSB_DIR_OUT) {
+    _dcd.bdt[epnum][dir][odd ^ 1].own = 0;
+  }
+
   dcd_event_xfer_complete(rhport,
                           tu_edpt_addr(epnum, dir),
                           length - remaining, XFER_RESULT_SUCCESS, true);
