@@ -58,6 +58,47 @@ import ctypes
 from pymtp import MTP
 import string
 
+# --- per-board dev-session locks (see test/hil/board_lock.py) ------------
+BOARD_LOCK_DIR = '/tmp/tinyusb-hil-locks'
+
+def acquire_board_lock(board_name):
+    """Take this board's flock for the duration of its flash+test.
+    Returns an open file handle (keep it referenced; closing releases it),
+    or None when HIL_NO_BOARD_LOCK=1 or the lock dir is unusable (fail-open:
+    locking must never break a test run by itself).
+    Raises RuntimeError only when another session holds the board."""
+    import fcntl
+    if os.environ.get('HIL_NO_BOARD_LOCK') == '1':
+        return None  # user-authorized bypass — see board_lock.py / hil skill
+    try:
+        os.makedirs(BOARD_LOCK_DIR, exist_ok=True)
+        fd = os.open(os.path.join(BOARD_LOCK_DIR, f'{board_name}.lock'),
+                     os.O_RDWR | os.O_CREAT, 0o666)
+        fh = os.fdopen(fd, 'r+')
+    except OSError:
+        return None  # odd lock dir (perms, path collision): proceed unlocked
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        try:
+            info = fh.read(500).strip()
+        except (OSError, UnicodeDecodeError):
+            info = ''
+        fh.close()
+        raise RuntimeError(f'board locked: {info or "unknown holder"}')
+    # announce ourselves so the other side's conflict message is truthful;
+    # best-effort — the flock itself is already held
+    try:
+        fh.truncate(0)
+        fh.seek(0)
+        json.dump({'pid': os.getpid(), 'reason': 'hil_test.py',
+                   'since': time.strftime('%Y-%m-%dT%H:%M:%S%z')}, fh)
+        fh.flush()
+    except OSError:
+        pass
+    return fh
+
+
 ENUM_TIMEOUT = 15
 
 STATUS_OK = "\033[32mOK\033[0m"
@@ -1659,63 +1700,72 @@ def test_board(board: Board) -> tuple[str, int, list[str], list]:
     name = board['name']
     flasher = board['flasher']
 
-    # default to all tests
-    test_list = []
+    try:
+        _lock_fh = acquire_board_lock(name)
+    except RuntimeError as e:
+        log_line(f'{name:25} {STATUS_FAILED}: {e}')
+        return name, 1, [], []
+    try:
+        # default to all tests
+        test_list = []
 
-    if name in board_test:
-        test_list = board_test[name]
-    elif len(test_only) > 0:
-        # Explicit -t: filter against the board's capabilities so a device-only
-        # board doesn't try to run host/dual tests (the test functions need a
-        # `dev_attached` entry in the board config that won't exist).
-        board_tests = board.get('tests', {})
-        if 'only' in board_tests:
-            allowed = set(board_tests['only'])
-            test_list = [t for t in test_only if t in allowed]
-        else:
-            for t in test_only:
-                category = t.split('/', 1)[0]
-                if board_tests.get(category) is True:
-                    test_list.append(t)
-    else:
-        if 'tests' in board:
-            board_tests = board['tests']
-            if board_tests.get('device') is True:
-                test_list += list(device_tests)
-            if board_tests.get('dual') is True:
-                test_list += dual_tests
-            if board_tests.get('host') is True:
-                test_list += host_test
+        if name in board_test:
+            test_list = board_test[name]
+        elif len(test_only) > 0:
+            # Explicit -t: filter against the board's capabilities so a device-only
+            # board doesn't try to run host/dual tests (the test functions need a
+            # `dev_attached` entry in the board config that won't exist).
+            board_tests = board.get('tests', {})
             if 'only' in board_tests:
-                test_list = board_tests['only']
-            if 'skip' in board_tests:
-                for skip in board_tests['skip']:
-                    if skip in test_list:
-                        test_list.remove(skip)
-                        log_line(f'{name:25} {skip:30} ... Skip')
+                allowed = set(board_tests['only'])
+                test_list = [t for t in test_only if t in allowed]
+            else:
+                for t in test_only:
+                    category = t.split('/', 1)[0]
+                    if board_tests.get(category) is True:
+                        test_list.append(t)
+        else:
+            if 'tests' in board:
+                board_tests = board['tests']
+                if board_tests.get('device') is True:
+                    test_list += list(device_tests)
+                if board_tests.get('dual') is True:
+                    test_list += dual_tests
+                if board_tests.get('host') is True:
+                    test_list += host_test
+                if 'only' in board_tests:
+                    test_list = board_tests['only']
+                if 'skip' in board_tests:
+                    for skip in board_tests['skip']:
+                        if skip in test_list:
+                            test_list.remove(skip)
+                            log_line(f'{name:25} {skip:30} ... Skip')
 
-    err_count = 0
-    failed_tests = []
-    rows = []  # list of (row_label, {example: status}) — one row per build variant
-    variants = board.get('variant') or [{'name': name, 'flags': ''}]
+        err_count = 0
+        failed_tests = []
+        rows = []  # list of (row_label, {example: status}) — one row per build variant
+        variants = board.get('variant') or [{'name': name, 'flags': ''}]
 
-    for v in variants:
-        vname = v['name']
-        cells = {}
-        for test in test_list:
-            ec, status, metric = test_example(board, vname, test)
-            err_count += ec
-            cells[test] = metric if metric else status
-            if ec > 0:
-                failed_tests.append(test)
-        rows.append((vname, cells))
+        for v in variants:
+            vname = v['name']
+            cells = {}
+            for test in test_list:
+                ec, status, metric = test_example(board, vname, test)
+                err_count += ec
+                cells[test] = metric if metric else status
+                if ec > 0:
+                    failed_tests.append(test)
+            rows.append((vname, cells))
 
-    # flash board_test last to disable board's usb (skipped when --skip-flash is set);
-    # this is teardown/park, not a test — not recorded in the report
-    if not skip_flash:
-        test_example(board, variants[0]['name'], 'device/board_test')
+        # flash board_test last to disable board's usb (skipped when --skip-flash is set);
+        # this is teardown/park, not a test — not recorded in the report
+        if not skip_flash:
+            test_example(board, variants[0]['name'], 'device/board_test')
 
-    return name, err_count, sorted(set(failed_tests)), rows
+        return name, err_count, sorted(set(failed_tests)), rows
+    finally:
+        if _lock_fh:
+            _lock_fh.close()
 
 
 REPORT_MD = 'hil_report.md'
