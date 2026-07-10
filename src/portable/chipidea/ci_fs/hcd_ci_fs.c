@@ -331,6 +331,16 @@ static void process_tokdne(uint8_t rhport)
   }
   _hcd.in_progress  &= ~TU_BIT(pipenum);
   pipe_state_t *pipe = &_hcd.pipe[ep->pipenum];
+  /* A multi-packet transfer speculatively arms the sibling (odd^1) BDT (see
+   * prepare_packets) to ping-pong without NAKs. When it ends early (a short IN packet)
+   * or fails, that sibling is still owned by the SIE; since the host shares a single
+   * BDT set across all pipes, a leftover armed sibling blocks every other pipe forever
+   * (e.g. a 2nd device stuck enumerating behind a hub). Release it - but ONLY for a
+   * multi-packet transfer: a single-packet transfer never armed a sibling, so that
+   * BDT slot may legitimately belong to another pipe's in-flight transfer. */
+  if (pipe->length > pipe->max_packet_size) {
+    ((buffer_descriptor_t *)&_hcd.bda[s ^ USB_STAT_ODD_MASK])->own = 0;
+  }
   hcd_event_xfer_complete(pipe->dev_addr,
                           tu_edpt_addr(CI_REG->TOKEN & USB_TOKEN_TOKENENDPT_MASK, dir_in),
                           pipe->length - pipe->remaining,
