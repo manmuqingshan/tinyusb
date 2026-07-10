@@ -36,6 +36,25 @@ const BUILD = {
     },
   },
 }
+const PVS = {
+  type: 'object', additionalProperties: false,
+  required: ['pass', 'ga1', 'ga2', 'changedFindings', 'detail'],
+  properties: {
+    pass: { type: 'boolean' }, ga1: { type: 'integer' }, ga2: { type: 'integer' },
+    changedFindings: {
+      type: 'array',
+      items: {
+        type: 'object', additionalProperties: false,
+        required: ['file', 'line', 'rule', 'level', 'message'],
+        properties: {
+          file: { type: 'string' }, line: { type: 'integer' }, rule: { type: 'string' },
+          level: { type: 'integer' }, message: { type: 'string' },
+        },
+      },
+    },
+    detail: { type: 'string' },
+  },
+}
 
 const thunks = []
 
@@ -57,7 +76,7 @@ for (const b of args.boards) thunks.push(() =>
 
 if (!skip.includes('size')) thunks.push(() =>
   agent(
-    `Compare TinyUSB code size against ${base}: python3 tools/metrics_compare_base.py -b ${args.boards[0]} -e device/cdc_msc . ` +
+    `Compare TinyUSB code size against ${base}: python3 tools/metrics_compare_base.py --base-branch ${base} -b ${args.boards[0]} -e device/cdc_msc . ` +
     'The report lands in cmake-metrics/<board>/metrics_compare.md. pass=false only if the tool itself errors; ' +
     'detail = the flash/RAM delta summary from the report (mention any example that grew).',
     { label: 'size', phase: 'Validate', model: 'haiku', schema: STAGE },
@@ -65,15 +84,13 @@ if (!skip.includes('size')) thunks.push(() =>
 
 if (!skip.includes('pvs')) thunks.push(() =>
   agent(
-    'Run PVS-Studio static analysis per .claude/skills/pvs/SKILL.md, but with a DEDICATED build dir so you do not collide with parallel build agents: ' +
-    `cd examples && cmake -B cmake-build-pvs -DBOARD=${args.boards[0]} -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel . && cmake --build cmake-build-pvs. ` +
-    'Then: pvs-studio-analyzer analyze -f examples/cmake-build-pvs/compile_commands.json -R .PVS-Studio/.pvsconfig -o pvs-report.log -j12 ' +
-    '--security-related-issues --misra-c-version 2023 --misra-cpp-version 2008 --use-old-parser ' +
-    'and view with: plog-converter -a GA:1,2 -t errorfile pvs-report.log. ' +
-    `pass=false only if GA:1 diagnostics exist in files changed vs ${base} (git diff --name-only ${base}...HEAD). ` +
-    'detail = GA:1/GA:2 counts plus any diagnostics in changed files.',
-    { label: 'pvs', phase: 'Validate', model: 'sonnet', effort: 'low', schema: STAGE },
-  ).then(r => r && { stage: 'pvs', ...r }))
+    `Run PVS-Studio static analysis for board ${args.boards[0]}, gating on files changed vs ${base}. ` +
+    'Parallel build agents are running — use your dedicated build dir, never cmake-build-<board>.',
+    { label: 'pvs', phase: 'Validate', agentType: 'static-analyzer', effort: 'low', schema: PVS },
+  ).then(r => r && {
+    stage: 'pvs', pass: r.pass,
+    detail: r.pass ? r.detail : clip(`${r.detail} ${JSON.stringify(r.changedFindings)}`),
+  }))
 
 const results = (await parallel(thunks)).filter(Boolean)
 const dead = thunks.length - results.length

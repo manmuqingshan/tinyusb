@@ -1704,7 +1704,9 @@ def test_board(board: Board) -> tuple[str, int, list[str], list]:
         _lock_fh = acquire_board_lock(name)
     except RuntimeError as e:
         log_line(f'{name:25} {STATUS_FAILED}: {e}')
-        return name, 1, [], []
+        # visible report row so the ❌ matches the exit code; failed-tests stays
+        # empty so a re-run repeats the whole board (no bogus -bt test filter)
+        return name, 1, [], [(name, {'board-locked': 'fail'})]
     try:
         # default to all tests
         test_list = []
@@ -1831,7 +1833,11 @@ def accumulate_report(mret: list, report_dir: Path, fresh: bool) -> str:
             pass  # corrupt/old sidecar: start fresh
 
     # merge this run: current cells override prior for boards/tests that ran
-    for _, _, _, rows in mret:
+    for name, _, _, rows in mret:
+        if rows and not any('board-locked' in cells for _, cells in rows):
+            # board ran for real this time: clear a stale lock-failure cell
+            # (its row is keyed by board name; test rows may be variant names)
+            acc.get(name, {}).pop('board-locked', None)
         for row_label, cells in rows:
             acc.setdefault(row_label, {}).update(cells)
 

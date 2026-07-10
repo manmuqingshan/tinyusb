@@ -1,11 +1,11 @@
 export const meta = {
   name: 'pr-babysit',
   description: 'Drive a PR to green: pr-monitor triage (CI + bot reviews), port-dev fixes for validated findings, driver-reviewer verification, one commit+push per cycle',
-  whenToUse: 'After opening a PR, from a checkout of the PR branch. Invoking with autoPush enabled authorizes pushes to that branch.',
+  whenToUse: 'After opening a PR, from a checkout of the PR branch. Default is a dry run (fixes left uncommitted, nothing posted); passing autoPush: true is the explicit authorization for pushes and PR comments.',
   phases: [{ title: 'Triage' }, { title: 'Fix' }, { title: 'Verify' }, { title: 'Push' }],
 }
 
-// args: { pr: number, maxCycles?: number, autoPush?: boolean }
+// args: { pr: number, maxCycles?: number, autoPush?: boolean (default false = dry run) }
 if (typeof args === 'string') args = JSON.parse(args)  // tolerate stringified invocation args
 if (!args || !args.pr) {
   throw new Error('args must be { pr: number, maxCycles?, autoPush? }; run from a checkout of the PR branch')
@@ -84,8 +84,8 @@ const OP = {
 const RESOLVE_RECIPE =
   'To resolve the review thread for an inline review comment (its integer databaseId is the commentId): ' +
   'get owner/repo via `gh repo view --json nameWithOwner -q .nameWithOwner`; find the thread node id with ' +
-  '`gh api graphql -f query=\'query($o:String!,$r:String!,$p:Int!){repository(owner:$o,name:$r){pullRequest(number:$p){reviewThreads(first:100){nodes{id isResolved comments(first:50){nodes{databaseId}}}}}}}\' -F o=OWNER -F r=REPO -F p=' + args.pr + '` ' +
-  '(paginate with the endCursor if there are more than 100 threads), pick the thread whose comments contain that databaseId, then resolve it with ' +
+  '`gh api graphql -f query=\'query($o:String!,$r:String!,$p:Int!,$c:String){repository(owner:$o,name:$r){pullRequest(number:$p){reviewThreads(first:100,after:$c){pageInfo{hasNextPage endCursor}nodes{id isResolved comments(first:50){nodes{databaseId}}}}}}}\' -F o=OWNER -F r=REPO -F p=' + args.pr + '` ' +
+  '(while hasNextPage is true and the comment is not found yet, re-run with -F c=<endCursor>), pick the thread whose comments contain that databaseId, then resolve it with ' +
   '`gh api graphql -f query=\'mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}\' -F id=THREAD_ID`. ' +
   'Issue comments (the 404 fallback case) have no thread — do not try to resolve those.'
 
@@ -106,7 +106,7 @@ for (let cycle = 1; cycle <= maxCycles; cycle++) {
   // Post drafted replies to REFUTED findings as soon as triage produces them —
   // decoupled from fixing/pushing so done/unactionable cycles still post.
   // Reply AND resolve the thread. Outward-facing, so gated on autoPush.
-  if (t.replies.length > 0 && args.autoPush !== false) {
+  if (t.replies.length > 0 && args.autoPush === true) {
     const posted = await agent(
       `Reply to and resolve these refuted review comments on PR #${args.pr}. For each: post the reply with ` +
       `gh api repos/{owner}/{repo}/pulls/${args.pr}/comments/{commentId}/replies -f body=<body> ` +
@@ -168,8 +168,8 @@ for (let cycle = 1; cycle <= maxCycles; cycle++) {
   if (aliveFixes.length < work.length) log(`${work.length - aliveFixes.length} fix group(s) lost to dead workers`)
   entry.fixes = aliveFixes
 
-  if (args.autoPush === false) {
-    log('autoPush=false: fixes left uncommitted in the working tree (dry run)')
+  if (args.autoPush !== true) {
+    log('autoPush not set: fixes left uncommitted in the working tree (dry run)')
     return { pass: false, cycles: cycle, history, dryRun: true }
   }
 
@@ -199,8 +199,9 @@ for (let cycle = 1; cycle <= maxCycles; cycle++) {
     const resolved = await agent(
       `The fixes for PR #${args.pr}'s valid review findings were just committed and pushed (${push.detail}). ` +
       'For each finding below: post a threaded reply to its inline comment via ' +
-      `gh api repos/{owner}/{repo}/pulls/${args.pr}/comments/{commentId}/replies -f body=<body>, stating it is fixed in the pushed commit and one line on the change, ` +
-      `then mark its thread resolved. ${RESOLVE_RECIPE} ` +
+      `gh api repos/{owner}/{repo}/pulls/${args.pr}/comments/{commentId}/replies -f body=<body>, stating it is fixed in the pushed commit and one line on the change; ` +
+      `if that 404s, the id is an issue comment — post a regular PR comment instead (gh pr comment ${args.pr} --body <quote the original point, then the fix note>) and skip resolving. ` +
+      `After replying to an inline comment, mark its thread resolved. ${RESOLVE_RECIPE} ` +
       `Findings: ${JSON.stringify(fixed.map(f => ({ commentId: f.commentId, file: f.file, line: f.line, claim: f.claim, fixHint: f.fixHint })))}. ` +
       'pass=true only if every reply was posted and every thread resolved; detail = what went where.',
       { label: `resolve#${cycle}`, phase: 'Push', model: 'sonnet', schema: OP },

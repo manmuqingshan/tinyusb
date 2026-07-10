@@ -57,3 +57,11 @@ pr-babysit {pr: 3761, maxCycles: 1, autoPush: false} (wf_361c9e0a-d0e) + direct 
 - Remaining: Task 18 verdicts, final whole-branch review, memory note update for the lock protocol.
 
 Stop-gate extra (done this session): board_lock `cmd_hold` holder-signaled success via pipe (c326eaacc), storm-tested 10/10 exactly-one-winner.
+
+## Post-review fixes (2026-07-10, owner-confirmed batch)
+
+- board_lock: holder daemon detaches stdio (captured `hold` returned in 30 ms; pre-fix hung on the inherited pipe); `is_locked()` re-done as pid-liveness probe — never touches the flock, so status/pre-check storms can no longer fail a concurrent acquirer (0/15 failures under a 300-probe storm; hold storm still 1-winner-in-10).
+- hil_test: locked board now emits a visible `board-locked` ❌ report row (report matches exit code); `accumulate_report` clears the stale marker once the board runs for real (3-scenario logic test green). failed-tests stays empty so re-runs repeat the whole board.
+- pr-babysit: `autoPush` now opt-in (default dry run; `autoPush: true` is the explicit push/comment authorization); RESOLVE_RECIPE paginates reviewThreads (`pageInfo` + cursor); post-push resolve step gained the same issue-comment 404 fallback as the refuted-replies step.
+- validate: size stage passes `--base-branch <base>`; pvs stage now calls the new `static-analyzer` agent (sonnet, structured `{pass, ga1, ga2, changedFindings[], detail}`).
+- NEW agent `static-analyzer` (PVS-Studio SAST+MISRA, read-only) — mirrored to the launch-dir registry; registers next session (harness fact 1), so the validate pvs stage is unsmokable until then.

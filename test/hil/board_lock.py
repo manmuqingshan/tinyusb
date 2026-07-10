@@ -49,17 +49,22 @@ def read_info(board: str):
 
 
 def is_locked(board: str) -> bool:
-    """True if some live process currently holds the flock."""
-    path = lock_path(board)
-    if not os.path.exists(path):
+    """True if the recorded holder process is still alive.
+
+    Deliberately never touches the flock: even a momentary probe lock would
+    make a concurrent acquirer's LOCK_NB attempt fail spuriously. The flock
+    taken by acquirers themselves stays the only authority."""
+    info = read_info(board)
+    pid = info.get('pid') if isinstance(info, dict) else None
+    if not isinstance(pid, int) or pid <= 0:
         return False
-    with open(path) as f:
-        try:
-            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            fcntl.flock(f, fcntl.LOCK_UN)
-            return False
-        except OSError:
-            return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # alive but owned by another user (e.g. the CI runner)
+    return True
 
 
 def cmd_hold(boards, reason):
@@ -91,6 +96,13 @@ def cmd_hold(boards, reason):
         os._exit(0)
     # holder (grandchild): acquire all flocks, signal the parent, sleep until killed
     os.close(r_fd)
+    # Detach stdio: a `hold` whose output is captured must see EOF when the
+    # front-end exits — the immortal holder must not keep that pipe open.
+    devnull = os.open(os.devnull, os.O_RDWR)
+    for std_fd in (0, 1, 2):
+        os.dup2(devnull, std_fd)
+    if devnull > 2:
+        os.close(devnull)
     try:
         handles = []
         for b in boards:

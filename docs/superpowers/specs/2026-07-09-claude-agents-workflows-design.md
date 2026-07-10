@@ -30,8 +30,9 @@ Layered: **agents** (who does the work, with baked-in domain knowledge) ×
 ### Worker agents — `.claude/agents/*.md`
 
 Tiered models (owner revision 2026-07-09; originally all-opus): `port-dev`
-and `driver-reviewer` on **opus** at **xhigh**; `hil-operator` and
-`pr-monitor` on **sonnet**; `builder` on **haiku** (mechanical, log-heavy).
+and `driver-reviewer` on **opus** at **xhigh**; `hil-operator`, `pr-monitor`
+and `static-analyzer` on **sonnet**; `builder` on **haiku** (mechanical,
+log-heavy).
 
 | Agent | Effort | Role |
 |---|---|---|
@@ -40,17 +41,18 @@ and `driver-reviewer` on **opus** at **xhigh**; `hil-operator` and
 | `driver-reviewer` | xhigh | Review one dcd/hcd directory against dimensions: correctness, ISR safety, register use vs. datasheet AND MCU errata (calibre library; missing erratum workarounds are findings), style. Returns structured findings `{file, line, snippet, why, severity, confidence}` — coverage-first (report everything; filtering happens downstream). |
 | `hil-operator` | default | All rig interaction — the actions-runner service is NEVER stopped; per-board flock locks arbitrate with concurrent CI. `hil_test.py` runs rely on its per-board self-locking; manual hardware work (JLink/GDB, usbtest, serial) is wrapped in `test/hil/board_lock.py hold/release`; rig-wide ops (uhubctl, pci-rebind) require `hold --all`; on wedge `usb_recover.sh` + dmesg. Used strictly serially — never two instances concurrently. |
 | `pr-monitor` | default | Triage one GitHub PR via `gh`: check CI status (`gh pr checks`), read failing run logs and classify each failure infra/flake vs real; re-run infra failures (`gh run rerun --failed`); harvest automated review comments (Codex/Copilot/Claude bots — knows their signals: Codex posts a "Didn't find any major issues" issue comment when clean; Copilot drops out of `requested_reviewers` when done; bot logins differ across APIs); adversarially validate each finding against the actual code. Returns structured triage `{ci: {status, infraRerun[], realFailures[]}, findings: [{source, file, line, claim, verdict, fixHint}]}`. Read/triage/re-run/reply only — never edits code. |
+| `static-analyzer` | low | Run PVS-Studio (SAST + MISRA C:2023/C++:2008) for one board: build with exported `compile_commands.json` (via `run_pvs.sh` solo, or a dedicated `cmake-build-pvs` dir when parallel builders run), analyze against `.PVS-Studio/.pvsconfig`, gate on diagnostics in files changed vs a base ref. Returns `{pass, ga1, ga2, changedFindings[], detail}`; `pass=false` only on GA:1 in changed files or tool failure. Read-only. |
 
 ### Workflows — `.claude/workflows/*.js`
 
 | Workflow | Args | Shape |
 |---|---|---|
-| `validate.js` | `{boards[], examples?, base?, skip?: ('unit'\|'size'\|'pvs')[]}` | One parallel stage: unit tests (ceedling) + one `builder` per board + code-size compare (`tools/metrics_compare_base.py` vs `base`, default master) + PVS analyze. Join → plain-JS verdict `{pass, failures[]}`. Barrier is correct here: the verdict needs all results. |
+| `validate.js` | `{boards[], examples?, base?, skip?: ('unit'\|'size'\|'pvs')[]}` | One parallel stage: unit tests (ceedling) + one `builder` per board + code-size compare (`tools/metrics_compare_base.py` vs `base`, default master) + PVS analyze (`static-analyzer` agent). Join → plain-JS verdict `{pass, failures[]}`. Barrier is correct here: the verdict needs all results. |
 | `fanout-dev.js` | `{task, items[], board?, review?, worktree?}` | `pipeline(items)`: `port-dev` per item → `builder` verify → optional `driver-reviewer` pass. Workers share the tree by default (ports are disjoint directories); `worktree: true` switches on per-agent worktree isolation for collision-prone tasks. Returns per-item results. |
 | `driver-review.js` | `{dirs[], dimensions?, question?}` | Supersedes `port-audit.js`. Scan stage per (dir × dimension) → adversarial verify per finding (verifier prompted to refute) → confirmed findings only. |
 | `hil-validate.js` | `{boards[], force?}` | Strictly serial `for` loop of `hil-operator` calls; each board is protected by `hil_test.py`'s own per-board flock, so the actions-runner keeps running throughout. Boards found locked (a concurrent CI job mid-test) are retried once at the end of the loop; boards still locked are returned in `locked[]` for a user force/wait/accept decision. `force: true` (user-authorized only) bypasses locks via `HIL_NO_BOARD_LOCK=1`. Returns per-board `{board, pass, detail}` plus `wedged[]` and `locked[]`. |
 | `full-check.js` | `{boards[], ...}` | Thin composer: `workflow('validate', ...)` → only if green → `workflow('hil-validate', ...)`. Single nesting level (children do not nest further). |
-| `pr-babysit.js` | `{pr, maxCycles?, autoPush?}` | Cycle until CI green + review threads resolved, or `maxCycles` (default 3): `pr-monitor` triage (blocks on `gh pr checks --watch` while CI runs) → valid findings + real CI failures grouped by file/port → `port-dev` fix per group (pipeline) → `driver-reviewer` verifies each fix addresses its finding → one commit + push per cycle. Every actioned inline comment is both **replied to and marked resolved** (GraphQL `resolveReviewThread`): refuted findings get the refutation, fixed findings get a "fixed in <sha>" note. `autoPush` defaults true; **invoking this workflow is the explicit push authorization** for follow-up commits on that PR branch (scoped exception to the hold-pushes-until-told rule). |
+| `pr-babysit.js` | `{pr, maxCycles?, autoPush?}` | Cycle until CI green + review threads resolved, or `maxCycles` (default 3): `pr-monitor` triage (blocks on `gh pr checks --watch` while CI runs) → valid findings + real CI failures grouped by file/port → `port-dev` fix per group (pipeline) → `driver-reviewer` verifies each fix addresses its finding → one commit + push per cycle. Every actioned inline comment is both **replied to and marked resolved** (GraphQL `resolveReviewThread`): refuted findings get the refutation, fixed findings get a "fixed in <sha>" note. `autoPush` defaults **false** (dry run: fixes stay uncommitted, nothing posted); **passing `autoPush: true` is the explicit push authorization** for follow-up commits and PR comments on that branch (scoped exception to the hold-pushes-until-told rule). |
 
 ### Board lock protocol — `test/hil/` (repo code)
 
