@@ -506,7 +506,17 @@ bool dcd_edpt_iso_alloc(uint8_t rhport, uint8_t ep_addr, uint16_t largest_packet
 
 bool dcd_edpt_iso_activate(uint8_t rhport, const tusb_desc_endpoint_t *desc_ep) {
   (void)rhport;
-  (void)desc_ep;
+  const uint8_t ep = tu_edpt_number(desc_ep->bEndpointAddress);
+  const uint8_t dir = tu_edpt_dir(desc_ep->bEndpointAddress);
+
+  // a transfer armed before SET_INTERFACE survives to here (no dcd close on this port): drop the
+  // stale descriptor and NAK the endpoint so the ISR can't complete it against the old buffer
+  data.xfer[ep][dir].valid = false;
+  if (dir == TUSB_DIR_IN) {
+    ep_tx_set_response(ep, USBFS_EP_T_RES_NAK);
+  } else {
+    ep_rx_set_response(ep, USBFS_EP_R_RES_NAK);
+  }
   return true;
 }
 
