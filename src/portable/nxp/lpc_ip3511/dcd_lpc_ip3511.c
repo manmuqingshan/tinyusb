@@ -341,10 +341,16 @@ void dcd_sof_enable(uint8_t rhport, bool en)
 //--------------------------------------------------------------------+
 // DCD Endpoint Port
 //--------------------------------------------------------------------+
-// Retire a still-armed (Active) endpoint the sanctioned way before its command/status entry is
-// rewritten (halt, reopen, altsetting switch). UM11126 §41.7.6/§41.8.3: write EPSKIP and wait for
-// hardware to clear the bit, then Active is safe to clear — a bare Active=0 can race a mid-packet
-// buffer. Bounded: hardware clears EPSKIP within a (micro)frame; the guard only prevents a hang.
+// Retire a still-armed (Active) endpoint before reconfiguring it (reopen across SET_INTERFACE).
+// UM11126 §41.7.6/§41.8.3: write EPSKIP and wait for hardware to clear the bit, then Active is
+// safe to clear. EPSKIP raises the endpoint interrupt as it clears Active, delivered as a
+// (partial) transfer completion. Here that is sanctioned — usbd_edpt_close() documents "in
+// progress transfers may be delivered after this call", and that completion is what clears the
+// stale usbd busy flag (ISO_ALLOC close is a no-op) so the class can re-arm the reopened
+// endpoint. NOT for the stall/iso-activate paths: there the class re-arms from the completion
+// callback and the endpoint ends up Active+Stall, which never sends a STALL handshake (usbtest
+// case 13 regression on LPC11u37) — those paths must clear Active directly instead.
+// Bounded: hardware clears EPSKIP within a (micro)frame.
 static void edpt_skip_active(uint8_t rhport, uint8_t ep_id) {
   ep_cmd_sts_t* ep_cs = get_ep_cs(ep_id);
   if ( ep_cs[0].cmd_sts.active || ep_cs[1].cmd_sts.active ) {
@@ -358,13 +364,14 @@ static void edpt_skip_active(uint8_t rhport, uint8_t ep_id) {
 
 void dcd_edpt_stall(uint8_t rhport, uint8_t ep_addr)
 {
+  (void) rhport;
   // TODO cannot able to STALL Control OUT endpoint !!!!! FIXME try some walk-around
   uint8_t const ep_id = ep_addr2id(ep_addr);
-  // Retire any armed buffer before setting Stall: the hardware services an armed (Active) buffer
-  // instead of returning STALL, so a halt requested while a transfer is queued would not actually
-  // stall the endpoint (usbtest case 13), and Active+Stall must not both be set.
-  edpt_skip_active(rhport, ep_id);
-  _dcd.ep[ep_id][0].cmd_sts.stall = 1;
+  // Clear Active directly before setting Stall (no EPSKIP — see edpt_skip_active): the hardware
+  // services an armed buffer instead of returning STALL, so a halt requested while a transfer is
+  // queued would not actually stall the endpoint (usbtest case 13).
+  _dcd.ep[ep_id][0].cmd_sts.active = 0;
+  _dcd.ep[ep_id][0].cmd_sts.stall  = 1;
 }
 
 void dcd_edpt_clear_stall(uint8_t rhport, uint8_t ep_addr)
@@ -448,15 +455,15 @@ bool dcd_edpt_iso_alloc(uint8_t rhport, uint8_t ep_addr, uint16_t largest_packet
 }
 
 bool dcd_edpt_iso_activate(uint8_t rhport, const tusb_desc_endpoint_t *desc_ep) {
-  // (Re)activate on altsetting selection: retire a buffer still armed from the previous altsetting
-  // (the hardware keeps servicing an Active buffer across SET_INTERFACE, fighting the class's fresh
-  // transfer), clear stall and reset the data toggle. The class re-arms via dcd_edpt_xfer().
+  // (Re)activate on altsetting selection: abort a transfer still armed from the previous
+  // altsetting (the hardware keeps servicing an Active buffer across SET_INTERFACE, fighting the
+  // fresh transfer the class queues), clear stall and reset the data toggle. Direct Active=0, not
+  // EPSKIP (see edpt_skip_active). The class re-arms via dcd_edpt_xfer().
   uint8_t ep_id = ep_addr2id(desc_ep->bEndpointAddress);
   ep_cmd_sts_t* ep_cs = get_ep_cs(ep_id);
-  edpt_skip_active(rhport, ep_id);
-  ep_cs[0].cmd_sts.stall        = 0;
-  ep_cs[0].cmd_sts.toggle_reset = 1;
-  ep_cs[0].cmd_sts.rf_tv        = 0;
+  ep_cs[0].cmd_sts.active = 0;
+  ep_cs[1].cmd_sts.active = 0;
+  dcd_edpt_clear_stall(rhport, desc_ep->bEndpointAddress);
   return true;
 }
 
