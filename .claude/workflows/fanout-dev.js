@@ -10,7 +10,7 @@ export const meta = {
 }
 
 // args: { task: string, items: string[], board?: string | Record<string,string>, review?: boolean, worktree?: boolean }
-if (typeof args === 'string') args = JSON.parse(args)  // tolerate stringified invocation args
+if (typeof args === 'string') { try { args = JSON.parse(args) } catch { /* not JSON: shape check below reports it */ } }
 if (!args || !args.task || !Array.isArray(args.items) || args.items.length === 0) {
   throw new Error('args must be { task: string, items: string[], board?, review?, worktree? }')
 }

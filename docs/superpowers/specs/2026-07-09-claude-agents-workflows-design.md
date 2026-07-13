@@ -59,24 +59,31 @@ log-heavy).
 CI and dev sessions share the rig concurrently; the actions-runner service is
 never stopped. Arbitration is per-board kernel flocks in
 `/tmp/tinyusb-hil-locks/<board>.lock` — auto-released when the holder process
-dies (stale locks impossible; `/tmp` clears on reboot):
+dies, with holders truncating their lock-file record on release so records
+stay truthful (`/tmp` clears on reboot):
 
 - **`test/hil/board_lock.py`** (new tool): `hold <boards|--all> --reason TEXT`
   spawns a background holder process flocking each board file (JSON
-  `{pid, reason, since}` written inside for debuggability); `release
-  <boards|--all>` kills holders; `status` lists them. `--all` is required
-  before rig-wide operations (uhubctl power cycling, pci-rebind — bus
-  renumbering affects every board).
+  `{pid, reason, since}` written inside for debuggability); the holder's own
+  LOCK_NB flock is the sole authority — there is deliberately no pid-based
+  pre-check (recorded pids can be stale or recycled). `release <boards|--all>`
+  probes each board's flock: a free lock only gets its stale record cleared;
+  a genuinely held one gets its recorded holder SIGTERMed — unless the holder
+  reason is `hil_test.py` (a CI run mid-test), which release refuses to kill.
+  `status` lists holders. `--all` is required before rig-wide operations
+  (uhubctl power cycling, pci-rebind — bus renumbering affects every board).
 - **`hil_test.py` guard** (small patch to the per-board worker): take the
   board's flock non-blocking before flashing and hold it for that board's
   flash+test; on acquire it writes its own holder info
   (`{pid, reason: "hil_test.py", since}`) so conflicts report truthfully in
-  both directions. If already held, FAIL the board immediately —
-  `FAILED (board locked: <holder info>)` — no flash, no waiting.
+  both directions, and truncates that record on release (the pool worker
+  outlives the per-board flock). If already held, FAIL the board immediately —
+  `Failed: board locked: <holder info>` — no flash, no waiting.
   The CI job fails visibly for exactly those boards and `re-run failed`
   passes once the lock is released (`build.yml` already retries the HIL step
-  once, absorbing short dev sessions). Guard defaults to proceeding if the
-  lock dir is absent/odd.
+  once, absorbing short dev sessions). Guard proceeds unlocked — with a
+  printed warning — if the lock dir is unusable, and `-b` names absent from
+  the config are a hard error rather than a silent zero-test green run.
 - **Re-entrancy rule:** dev sessions do NOT pre-hold boards they are about to
   run `hil_test.py` on (it self-locks; pre-holding deadlocks it).
   `board_lock.py hold` is for hardware work outside `hil_test.py` only.

@@ -6,11 +6,18 @@ export const meta = {
 }
 
 // args: { pr: number, maxCycles?: number, autoPush?: boolean (default false = dry run) }
-if (typeof args === 'string') args = JSON.parse(args)  // tolerate stringified invocation args
+if (typeof args === 'string') { try { args = JSON.parse(args) } catch { /* not JSON: shape check below reports it */ } }
 if (!args || !args.pr) {
   throw new Error('args must be { pr: number, maxCycles?, autoPush? }; run from a checkout of the PR branch')
 }
+args.pr = Number(args.pr)
+if (!Number.isInteger(args.pr) || args.pr <= 0) {
+  throw new Error('args.pr must be a positive integer PR number')
+}
 const maxCycles = args.maxCycles ?? 3
+if (!Number.isInteger(maxCycles) || maxCycles < 1) {
+  throw new Error('maxCycles must be an integer >= 1')
+}
 
 const TRIAGE = {
   type: 'object', additionalProperties: false,
@@ -89,7 +96,17 @@ const RESOLVE_RECIPE =
   '`gh api graphql -f query=\'mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}\' -F id=THREAD_ID`. ' +
   'Issue comments (the 404 fallback case) have no thread — do not try to resolve those.'
 
+// Mechanical reply skeleton shared by the refuted-replies and fixed-resolve
+// steps — kept in one place because the two copies drifted once already
+// (the 404 fallback was missing from one of them).
+const postReplyRecipe = (noun) =>
+  `post a threaded reply to its inline comment via gh api repos/{owner}/{repo}/pulls/${args.pr}/comments/{commentId}/replies -f body=<body> ` +
+  '(valid for inline review comments); if that 404s, the id is an issue comment — post a regular PR comment instead ' +
+  `(gh pr comment ${args.pr} --body <quote the original point, then the ${noun}>) and skip resolving. ` +
+  `After replying to an inline comment, mark its thread resolved. ${RESOLVE_RECIPE} `
+
 const history = []
+const repliedIds = new Set() // issue comments can't be thread-resolved, so they re-harvest every cycle — never reply twice
 for (let cycle = 1; cycle <= maxCycles; cycle++) {
   const t = await agent(
     `Triage PR #${args.pr}. If checks are still running, wait for them first (gh pr checks ${args.pr} --watch, Bash timeout >= 30 min). ` +
@@ -106,16 +123,15 @@ for (let cycle = 1; cycle <= maxCycles; cycle++) {
   // Post drafted replies to REFUTED findings as soon as triage produces them —
   // decoupled from fixing/pushing so done/unactionable cycles still post.
   // Reply AND resolve the thread. Outward-facing, so gated on autoPush.
-  if (t.replies.length > 0 && args.autoPush === true) {
+  const freshReplies = t.replies.filter(r => !repliedIds.has(r.commentId))
+  if (freshReplies.length > 0 && args.autoPush === true) {
     const posted = await agent(
-      `Reply to and resolve these refuted review comments on PR #${args.pr}. For each: post the reply with ` +
-      `gh api repos/{owner}/{repo}/pulls/${args.pr}/comments/{commentId}/replies -f body=<body> ` +
-      '(valid for inline review comments); if that 404s, the id is an issue comment — post a regular PR comment instead ' +
-      `(gh pr comment ${args.pr} --body <quote the original point, then the reply>) and skip resolving. ` +
-      `After replying to an inline comment, mark its thread resolved. ${RESOLVE_RECIPE} ` +
-      `Replies: ${JSON.stringify(t.replies)}. pass=true only if every reply was posted and every inline thread resolved; detail = what went where.`,
+      `Reply to and resolve these refuted review comments on PR #${args.pr}. For each: ${postReplyRecipe('reply')}` +
+      `Replies: ${JSON.stringify(freshReplies)}. pass=true only if every reply was posted and every inline thread resolved; detail = what went where.`,
       { label: `replies#${cycle}`, phase: 'Push', model: 'sonnet', schema: OP },
     )
+    // attempted counts as replied: better to drop a failed reply than spam duplicates
+    freshReplies.forEach(r => repliedIds.add(r.commentId))
     if (!posted || !posted.pass) log(`cycle ${cycle}: refuted reply/resolve incomplete — ${posted ? posted.detail : 'agent died'}`)
   }
 
@@ -198,10 +214,8 @@ for (let cycle = 1; cycle <= maxCycles; cycle++) {
   if (fixed.length > 0) {
     const resolved = await agent(
       `The fixes for PR #${args.pr}'s valid review findings were just committed and pushed (${push.detail}). ` +
-      'For each finding below: post a threaded reply to its inline comment via ' +
-      `gh api repos/{owner}/{repo}/pulls/${args.pr}/comments/{commentId}/replies -f body=<body>, stating it is fixed in the pushed commit and one line on the change; ` +
-      `if that 404s, the id is an issue comment — post a regular PR comment instead (gh pr comment ${args.pr} --body <quote the original point, then the fix note>) and skip resolving. ` +
-      `After replying to an inline comment, mark its thread resolved. ${RESOLVE_RECIPE} ` +
+      `For each finding below: ${postReplyRecipe('fix note')}` +
+      'Each reply states the finding is fixed in the pushed commit, with one line on the change. ' +
       `Findings: ${JSON.stringify(fixed.map(f => ({ commentId: f.commentId, file: f.file, line: f.line, claim: f.claim, fixHint: f.fixHint })))}. ` +
       'pass=true only if every reply was posted and every thread resolved; detail = what went where.',
       { label: `resolve#${cycle}`, phase: 'Push', model: 'sonnet', schema: OP },

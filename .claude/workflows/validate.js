@@ -6,7 +6,7 @@ export const meta = {
 }
 
 // args: { boards: string[], examples?: string, base?: string, skip?: ('unit'|'size'|'pvs')[] }
-if (typeof args === 'string') args = JSON.parse(args)  // tolerate stringified invocation args
+if (typeof args === 'string') { try { args = JSON.parse(args) } catch { /* not JSON: shape check below reports it */ } }
 if (!args || !Array.isArray(args.boards) || args.boards.length === 0) {
   throw new Error('args must be { boards: string[], examples?, base?, skip? }')
 }
@@ -76,7 +76,7 @@ for (const b of args.boards) thunks.push(() =>
 
 if (!skip.includes('size')) thunks.push(() =>
   agent(
-    `Compare TinyUSB code size against ${base}: python3 tools/metrics_compare_base.py --base-branch ${base} -b ${args.boards[0]} -e device/cdc_msc . ` +
+    `Compare TinyUSB code size against ${base}: python3 tools/metrics_compare_base.py --base-branch ${base} -b ${args.boards[0]} -e device/cdc_msc (exactly this command — no extra positional args). ` +
     'The report lands in cmake-metrics/<board>/metrics_compare.md. pass=false only if the tool itself errors; ' +
     'detail = the flash/RAM delta summary from the report (mention any example that grew).',
     { label: 'size', phase: 'Validate', model: 'haiku', schema: STAGE },

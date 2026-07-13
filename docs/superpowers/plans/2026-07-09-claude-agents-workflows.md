@@ -1,6 +1,14 @@
 # TinyUSB Multi-Agent Dev/Test Harness Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **HISTORICAL RECORD — DO NOT EXECUTE.** This plan was fully executed on
+> 2026-07-09/10 (all tasks done; boxes below are checked). It is kept only as
+> the audit trail of how the harness was built. The embedded file bodies are
+> STALE SNAPSHOTS — the shipped `.claude/agents/*.md` and `.claude/workflows/*.js`
+> have since evolved (static-analyzer agent, schema and recipe changes); the
+> living design doc is `docs/superpowers/specs/2026-07-09-claude-agents-workflows-design.md`.
+> Do NOT run superpowers:executing-plans or subagent-driven-development on this
+> file, and do not copy its `git commit --no-verify` instructions — they applied
+> only to the original build-out.
 
 **Goal:** Add 5 custom worker agents, 6 workflows, and a `/pre-pr` skill that let Claude Code sessions develop and test TinyUSB with cheap-to-orchestrate multi-agent fan-out.
 
@@ -38,7 +46,7 @@
 - Produces (consumed by Tasks 6, 7 via `agentType: 'builder'`): final-message JSON
   `{"board": string, "pass": boolean, "builtCount": integer, "failures": [{"example": string, "class": string, "firstError": string}]}`
 
-- [ ] **Step 1: Write the agent file**
+- [x] **Step 1: Write the agent file**
 
 Write `.claude/agents/builder.md` with exactly this content:
 
@@ -92,12 +100,12 @@ Your final message is parsed by a program. Return ONLY this JSON — no prose, n
 `pass` is true only when zero failures remain after retries. `builtCount` = number of examples that built.
 ````
 
-- [ ] **Step 2: Verify structure**
+- [x] **Step 2: Verify structure**
 
 Run: `head -8 .claude/agents/builder.md`
 Expected: frontmatter block containing `name: builder`, `tools: Bash, Read, Grep, Glob`, `model: opus`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add .claude/agents/builder.md
@@ -116,12 +124,12 @@ git commit --no-verify -m "feat: add builder worker agent"
 - Produces (consumed by Tasks 7, 11 via `agentType: 'port-dev'`): final-message JSON
   `{"item": string, "diffstat": string, "buildOk": boolean, "board": string, "notes": string}`
 
-- [ ] **Step 1: Install clang-format (host tool, one-time)**
+- [x] **Step 1: Install clang-format (host tool, one-time)**
 
 Run: `sudo apt-get install -y clang-format && git clang-format -h | head -3`
 Expected: apt succeeds; `git clang-format -h` prints usage (proves both `clang-format` and the `git clang-format` subcommand exist). If the package is already installed this is a no-op.
 
-- [ ] **Step 2: Write the agent file**
+- [x] **Step 2: Write the agent file**
 
 Write `.claude/agents/port-dev.md` with exactly this content:
 
@@ -166,12 +174,12 @@ Your final message is parsed by a program. Return ONLY this JSON — no prose, n
 `buildOk` is the result of step 2. Put datasheet gaps, judgment calls, and anything a reviewer must know into `notes`.
 ````
 
-- [ ] **Step 3: Verify structure**
+- [x] **Step 3: Verify structure**
 
 Run: `head -6 .claude/agents/port-dev.md`
 Expected: frontmatter with `name: port-dev`, `model: opus`, and NO `tools:` line (port-dev needs edit tools — inherits all).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add .claude/agents/port-dev.md
@@ -190,7 +198,7 @@ git commit --no-verify -m "feat: add port-dev worker agent"
   - findings: `{"scope": string, "dimension": string, "findings": [{"file": string, "line": integer, "snippet": string, "why": string, "severity": "critical"|"major"|"minor", "confidence": "high"|"medium"|"low"}]}`
   - verification: `{"addresses": boolean, "reason": string}` (also used with keys `real`/`reason` when the prompt asks to refute a finding)
 
-- [ ] **Step 1: Write the agent file**
+- [x] **Step 1: Write the agent file**
 
 Write `.claude/agents/driver-reviewer.md` with exactly this content:
 
@@ -223,12 +231,12 @@ Your final message is parsed by a program. Return ONLY the JSON shape your promp
 {"scope": "src/portable/...", "dimension": "...", "findings": [{"file": "...", "line": 123, "snippet": "...", "why": "...", "severity": "major", "confidence": "high"}]}
 ````
 
-- [ ] **Step 2: Verify structure**
+- [x] **Step 2: Verify structure**
 
 Run: `head -8 .claude/agents/driver-reviewer.md`
 Expected: frontmatter with `name: driver-reviewer`, `tools: Bash, Read, Grep, Glob`, `model: opus`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add .claude/agents/driver-reviewer.md
@@ -246,7 +254,7 @@ git commit --no-verify -m "feat: add driver-reviewer worker agent"
 - Produces (consumed by Task 9 via `agentType: 'hil-operator'`): final-message JSON per calling prompt — board runs `{"board": string, "pass": boolean, "detail": string, "wedged": boolean}`
 - Consumes: `test/hil/board_lock.py` (Task 19) for manual hardware work.
 
-- [ ] **Step 1: Write the agent file**
+- [x] **Step 1: Write the agent file**
 
 Write `.claude/agents/hil-operator.md` with exactly this content:
 
@@ -292,12 +300,12 @@ Your final message is parsed by a program. Return ONLY the JSON shape your promp
 {"board": "raspberry_pi_pico", "pass": true, "detail": "<per-test summary or first failure>", "wedged": false}
 ````
 
-- [ ] **Step 2: Verify structure**
+- [x] **Step 2: Verify structure**
 
 Run: `head -8 .claude/agents/hil-operator.md`
 Expected: frontmatter with `name: hil-operator`, `tools: Bash, Read, Grep, Glob`, `model: opus`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add .claude/agents/hil-operator.md
@@ -315,7 +323,7 @@ git commit --no-verify -m "feat: add hil-operator worker agent"
 - Produces (consumed by Task 11 via `agentType: 'pr-monitor'`): final-message JSON
   `{"ci": {"status": "green"|"red"|"running", "infraRerun": [string], "realFailures": [{"check": string, "firstError": string, "files": [string]}]}, "findings": [{"source": string, "commentId": integer, "file": string, "line": integer, "claim": string, "verdict": "valid"|"invalid"|"stale", "reason": string, "fixHint": string}], "replies": [{"commentId": integer, "body": string}], "done": boolean}`
 
-- [ ] **Step 1: Write the agent file**
+- [x] **Step 1: Write the agent file**
 
 Write `.claude/agents/pr-monitor.md` with exactly this content:
 
@@ -360,12 +368,12 @@ Your final message is parsed by a program. Return ONLY this JSON — no prose, n
  "done": false}
 ````
 
-- [ ] **Step 2: Verify structure**
+- [x] **Step 2: Verify structure**
 
 Run: `head -8 .claude/agents/pr-monitor.md`
 Expected: frontmatter with `name: pr-monitor`, `tools: Bash, Read, Grep, Glob`, `model: opus`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add .claude/agents/pr-monitor.md
@@ -384,7 +392,7 @@ git commit --no-verify -m "feat: add pr-monitor triage agent"
 - `check.sh <file.js>` prints `OK: <file>` and exits 0 on valid workflow syntax (used by every later workflow task).
 - `validate` workflow — Consumes: `builder` agent (Task 1). Args `{boards: string[], examples?: string, base?: string, skip?: ('unit'|'size'|'pvs')[]}`. Returns `{pass: boolean, stages: [{stage, pass, detail}], failures: [...]}` (consumed by Task 10 via `workflow('validate', ...)`).
 
-- [ ] **Step 1: Write the checker**
+- [x] **Step 1: Write the checker**
 
 Write `.claude/workflows/check.sh` with exactly this content (then `chmod +x .claude/workflows/check.sh`):
 
@@ -405,12 +413,12 @@ trap 'rm -f "$tmp"' EXIT
 node --check "$tmp" && echo "OK: $f"
 ```
 
-- [ ] **Step 2: Verify checker fails on bad input and passes on good**
+- [x] **Step 2: Verify checker fails on bad input and passes on good**
 
 Run: `printf 'return }broken\n' > /tmp/bad.js; bash .claude/workflows/check.sh /tmp/bad.js; echo "exit=$?"`
 Expected: SyntaxError printed, `exit=1` (non-zero).
 
-- [ ] **Step 3: Write validate.js**
+- [x] **Step 3: Write validate.js**
 
 Write `.claude/workflows/validate.js` with exactly this content:
 
@@ -500,12 +508,12 @@ log(`${results.length}/${thunks.length} stages completed, ${failures.length} fai
 return { pass: failures.length === 0 && dead === 0, stages: results, failures }
 ```
 
-- [ ] **Step 4: Syntax-check**
+- [x] **Step 4: Syntax-check**
 
 Run: `bash .claude/workflows/check.sh .claude/workflows/validate.js`
 Expected: `OK: .claude/workflows/validate.js`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add .claude/workflows/check.sh .claude/workflows/validate.js
@@ -523,7 +531,7 @@ git commit --no-verify -m "feat: add validate workflow and workflow syntax check
 - Consumes: `port-dev` (Task 2), `builder` (Task 1), `driver-reviewer` (Task 3).
 - Args `{task: string, items: string[], board?: string | {[item]: string}, review?: boolean, worktree?: boolean}`. Returns array of `{item, diffstat, buildOk, board, notes, verifyBuild?, review?}`.
 
-- [ ] **Step 1: Write the workflow**
+- [x] **Step 1: Write the workflow**
 
 Write `.claude/workflows/fanout-dev.js` with exactly this content:
 
@@ -642,12 +650,12 @@ log(`${done.length}/${args.items.length} items completed; ${done.filter(r => r.b
 return done
 ```
 
-- [ ] **Step 2: Syntax-check**
+- [x] **Step 2: Syntax-check**
 
 Run: `bash .claude/workflows/check.sh .claude/workflows/fanout-dev.js`
 Expected: `OK: .claude/workflows/fanout-dev.js`
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add .claude/workflows/fanout-dev.js
@@ -666,7 +674,7 @@ git commit --no-verify -m "feat: add fanout-dev workflow"
 - Args `{dirs: string[], dimensions?: string[], question?: string}`. Returns array of `{dir, dim, findings: [finding & {verdict: {real, reason}}]}` — confirmed findings only.
 - Note: supersedes the untracked prototype `.claude/workflows/port-audit.js` in the master working tree (deleted at merge time; nothing to do on this branch).
 
-- [ ] **Step 1: Write the workflow**
+- [x] **Step 1: Write the workflow**
 
 Write `.claude/workflows/driver-review.js` with exactly this content:
 
@@ -756,12 +764,12 @@ log(`${confirmed.length} scan units produced confirmed findings`)
 return confirmed
 ```
 
-- [ ] **Step 2: Syntax-check**
+- [x] **Step 2: Syntax-check**
 
 Run: `bash .claude/workflows/check.sh .claude/workflows/driver-review.js`
 Expected: `OK: .claude/workflows/driver-review.js`
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add .claude/workflows/driver-review.js
@@ -779,7 +787,7 @@ git commit --no-verify -m "feat: add driver-review workflow (supersedes port-aud
 - Consumes: `hil-operator` (Task 4). Requires `examples/cmake-build-<board>/` to exist for every board.
 - Args `{boards: string[]}`. Returns `{pass: boolean, results: [{board, pass, detail, wedged}], wedged: [string]}` (consumed by Task 10).
 
-- [ ] **Step 1: Write the workflow**
+- [x] **Step 1: Write the workflow**
 
 Write `.claude/workflows/hil-validate.js` with exactly this content:
 
@@ -846,12 +854,12 @@ if (locked.length) log(`still locked after retry: ${locked.join(', ')} — ask t
 return { pass: results.length === args.boards.length && results.every(r => r.pass), results, wedged, locked }
 ```
 
-- [ ] **Step 2: Syntax-check**
+- [x] **Step 2: Syntax-check**
 
 Run: `bash .claude/workflows/check.sh .claude/workflows/hil-validate.js`
 Expected: `OK: .claude/workflows/hil-validate.js`
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add .claude/workflows/hil-validate.js
@@ -869,7 +877,7 @@ git commit --no-verify -m "feat: add hil-validate workflow (serialized, lock-arb
 - Consumes: `validate` workflow (Task 6), `hil-validate` workflow (Task 9) via `workflow()` nesting (one level — legal).
 - Args `{boards: string[], hilBoards?: string[], examples?: string, base?: string, skip?: string[]}`. Returns `{pass, software, hardware}` (consumed by the `/pre-pr` skill, Task 12).
 
-- [ ] **Step 1: Write the workflow**
+- [x] **Step 1: Write the workflow**
 
 Write `.claude/workflows/full-check.js` with exactly this content:
 
@@ -910,12 +918,12 @@ if (hardware && hardware.locked && hardware.locked.length) {
 return { pass: !!(hardware && hardware.pass), software, hardware }
 ```
 
-- [ ] **Step 2: Syntax-check**
+- [x] **Step 2: Syntax-check**
 
 Run: `bash .claude/workflows/check.sh .claude/workflows/full-check.js`
 Expected: `OK: .claude/workflows/full-check.js`
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add .claude/workflows/full-check.js
@@ -934,7 +942,7 @@ git commit --no-verify -m "feat: add full-check composed workflow"
 - Args `{pr: number, maxCycles?: number, autoPush?: boolean}`. Must run from a checkout of the PR branch. Returns `{pass, cycles, history, reason?, dryRun?}`.
 - Push authorization: invoking with `autoPush !== false` authorizes pushes to the PR branch (spec'd exception to hold-pushes rule).
 
-- [ ] **Step 1: Write the workflow**
+- [x] **Step 1: Write the workflow**
 
 Write `.claude/workflows/pr-babysit.js` with exactly this content:
 
@@ -1152,12 +1160,12 @@ for (let cycle = 1; cycle <= maxCycles; cycle++) {
 return { pass: false, cycles: maxCycles, history, reason: 'maxCycles reached' }
 ```
 
-- [ ] **Step 2: Syntax-check**
+- [x] **Step 2: Syntax-check**
 
 Run: `bash .claude/workflows/check.sh .claude/workflows/pr-babysit.js`
 Expected: `OK: .claude/workflows/pr-babysit.js`
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add .claude/workflows/pr-babysit.js
@@ -1174,7 +1182,7 @@ git commit --no-verify -m "feat: add pr-babysit workflow"
 **Interfaces:**
 - Consumes: `full-check` workflow (Task 10), `test/hil/tinyusb.json` (board roster), `hw/bsp/*/family.cmake|family.mk` (family mapping).
 
-- [ ] **Step 1: Write the skill**
+- [x] **Step 1: Write the skill**
 
 Write `.claude/skills/pre-pr/SKILL.md` with exactly this content:
 
@@ -1223,12 +1231,12 @@ Invoke the Workflow tool:
 - End with a clear ship / no-ship verdict and what to fix first.
 ````
 
-- [ ] **Step 2: Verify structure**
+- [x] **Step 2: Verify structure**
 
 Run: `head -4 .claude/skills/pre-pr/SKILL.md`
 Expected: frontmatter with `name: pre-pr` and a `description:` line mentioning full-check.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add .claude/skills/pre-pr/SKILL.md
@@ -1241,48 +1249,48 @@ git commit --no-verify -m "feat: add /pre-pr skill entry point"
 
 **Files:** none created; exercises Tasks 1, 6.
 
-- [ ] **Step 1: Run** — Invoke the Workflow tool: `{ name: 'validate', args: { boards: ['stm32f407disco', 'raspberry_pi_pico'] } }`. (If board deps are missing the builder self-heals via get_deps.)
-- [ ] **Step 2: Verify** — Returned object has `stages` entries for `unit`, `build:stm32f407disco`, `build:raspberry_pi_pico`, `size`, `pvs`; each `detail` is meaningful; `pass` consistent with stage results. Master is green, so expect `pass: true`; investigate any failure before proceeding (a real regression on master is possible but unlikely).
-- [ ] **Step 3: Record** — Append the verdict JSON (and rough token usage from /workflows) to `docs/superpowers/plans/2026-07-09-smoke-results.md`; commit with `docs: record validate smoke result`.
+- [x] **Step 1: Run** — Invoke the Workflow tool: `{ name: 'validate', args: { boards: ['stm32f407disco', 'raspberry_pi_pico'] } }`. (If board deps are missing the builder self-heals via get_deps.)
+- [x] **Step 2: Verify** — Returned object has `stages` entries for `unit`, `build:stm32f407disco`, `build:raspberry_pi_pico`, `size`, `pvs`; each `detail` is meaningful; `pass` consistent with stage results. Master is green, so expect `pass: true`; investigate any failure before proceeding (a real regression on master is possible but unlikely).
+- [x] **Step 3: Record** — Append the verdict JSON (and rough token usage from /workflows) to `docs/superpowers/plans/2026-07-09-smoke-results.md`; commit with `docs: record validate smoke result`.
 
 ### Task 14: Smoke test — `fanout-dev` (MAIN SESSION ONLY)
 
-- [ ] **Step 1: Run** — Invoke Workflow: `{ name: 'fanout-dev', args: { task: 'Add a single comment line `// fanout-dev smoke test — remove me` at the very top of the main dcd_*.c source file in your assigned scope. Make no other change.', items: ['src/portable/raspberrypi/rp2040', 'src/portable/st/stm32_fsdev'], board: { 'src/portable/raspberrypi/rp2040': 'raspberry_pi_pico', 'src/portable/st/stm32_fsdev': 'stm32f072disco' } } }`
-- [ ] **Step 2: Verify** — Both items return `buildOk: true` and `verifyBuild: true`; `git diff --stat` shows exactly 2 files, 1 insertion each; diffs are clang-format-clean (`git clang-format --diff` reports no changes).
-- [ ] **Step 3: Revert the smoke edits** — `git checkout -- src/portable/` (verify `git status` clean afterwards).
-- [ ] **Step 4: Record** — Append results to the smoke-results doc; commit.
+- [x] **Step 1: Run** — Invoke Workflow: `{ name: 'fanout-dev', args: { task: 'Add a single comment line `// fanout-dev smoke test — remove me` at the very top of the main dcd_*.c source file in your assigned scope. Make no other change.', items: ['src/portable/raspberrypi/rp2040', 'src/portable/st/stm32_fsdev'], board: { 'src/portable/raspberrypi/rp2040': 'raspberry_pi_pico', 'src/portable/st/stm32_fsdev': 'stm32f072disco' } } }`
+- [x] **Step 2: Verify** — Both items return `buildOk: true` and `verifyBuild: true`; `git diff --stat` shows exactly 2 files, 1 insertion each; diffs are clang-format-clean (`git clang-format --diff` reports no changes).
+- [x] **Step 3: Revert the smoke edits** — `git checkout -- src/portable/` (verify `git status` clean afterwards).
+- [x] **Step 4: Record** — Append results to the smoke-results doc; commit.
 
 ### Task 15: Smoke test — `driver-review` (MAIN SESSION ONLY)
 
-- [ ] **Step 1: Run** — Invoke Workflow: `{ name: 'driver-review', args: { dirs: ['src/portable/renesas/rusb2', 'src/portable/nxp/lpc_ip3511'], question: 'unbounded busy-wait loops polling hardware status bits with no timeout or bail-out (whole-stack freeze risk if hardware never sets the bit)' } }`
-- [ ] **Step 2: Verify** — Returns only confirmed findings, each carrying `verdict.real: true` with a reasoned `verdict.reason`; spot-check one finding by reading the cited code yourself. (rusb2's known FRDY wedge was bounded in a past fix — a clean result there is plausible; judge findings on the code, not on expectations.)
-- [ ] **Step 3: Record** — Append results to the smoke-results doc; commit.
+- [x] **Step 1: Run** — Invoke Workflow: `{ name: 'driver-review', args: { dirs: ['src/portable/renesas/rusb2', 'src/portable/nxp/lpc_ip3511'], question: 'unbounded busy-wait loops polling hardware status bits with no timeout or bail-out (whole-stack freeze risk if hardware never sets the bit)' } }`
+- [x] **Step 2: Verify** — Returns only confirmed findings, each carrying `verdict.real: true` with a reasoned `verdict.reason`; spot-check one finding by reading the cited code yourself. (rusb2's known FRDY wedge was bounded in a past fix — a clean result there is plausible; judge findings on the code, not on expectations.)
+- [x] **Step 3: Record** — Append results to the smoke-results doc; commit.
 
 ### Task 16: Smoke test — `hil-validate` + board locks (MAIN SESSION ONLY)
 
-- [ ] **Step 1: Preconditions** — `ls examples/cmake-build-raspberry_pi_pico/` exists (from Task 13); Tasks 19–20 are done (`test/hil/board_lock.py` exists, `hil_test.py` guard in place); runner is ACTIVE: `systemctl is-active actions.runner.hathach-tinyusb.tinyusb.service` prints `active`.
-- [ ] **Step 2: Lock-conflict run** — `python3 test/hil/board_lock.py hold raspberry_pi_pico --reason "smoke lock test"`, then invoke Workflow: `{ name: 'hil-validate', args: { boards: ['raspberry_pi_pico'] } }`.
+- [x] **Step 1: Preconditions** — `ls examples/cmake-build-raspberry_pi_pico/` exists (from Task 13); Tasks 19–20 are done (`test/hil/board_lock.py` exists, `hil_test.py` guard in place); runner is ACTIVE: `systemctl is-active actions.runner.hathach-tinyusb.tinyusb.service` prints `active`.
+- [x] **Step 2: Lock-conflict run** — `python3 test/hil/board_lock.py hold raspberry_pi_pico --reason "smoke lock test"`, then invoke Workflow: `{ name: 'hil-validate', args: { boards: ['raspberry_pi_pico'] } }`.
   Expected: the board entry FAILS fast, `detail` cites `board locked` with the holder JSON (reason `smoke lock test`), no flash occurred (no JLink/flasher output), and the result carries `locked: ['raspberry_pi_pico']` — the signal for the force/wait/accept user prompt.
-- [ ] **Step 3: Force path (lock still held)** — invoke Workflow: `{ name: 'hil-validate', args: { boards: ['raspberry_pi_pico'], force: true } }`.
+- [x] **Step 3: Force path (lock still held)** — invoke Workflow: `{ name: 'hil-validate', args: { boards: ['raspberry_pi_pico'], force: true } }`.
   Expected: real flash+test proceeds despite the held lock (operator ran `HIL_NO_BOARD_LOCK=1`), result has empty `locked`, and the `board_lock.py status` holder is still alive afterwards (bypass, not theft).
-- [ ] **Step 4: Release and normal run** — `python3 test/hil/board_lock.py release raspberry_pi_pico`, invoke the Step 2 Workflow call again (no `force`).
+- [x] **Step 4: Release and normal run** — `python3 test/hil/board_lock.py release raspberry_pi_pico`, invoke the Step 2 Workflow call again (no `force`).
   Expected: a real flash+test result via the normal self-locking path (pass expected — firmware is master-green).
-- [ ] **Step 5: Runner untouched** — `systemctl is-active actions.runner.hathach-tinyusb.tinyusb.service` still prints `active`; the workflow made no stop/start calls.
-- [ ] **Step 6: Record** — Append all three results to the smoke-results doc; update the memory note `~/.claude/projects/-home-hathach-code-tinyusb/memory/ci-rig-stop-actions-runner.md` to describe the lock protocol (with the caveat that CI enforces it only after this branch merges to master); commit the smoke-results doc.
+- [x] **Step 5: Runner untouched** — `systemctl is-active actions.runner.hathach-tinyusb.tinyusb.service` still prints `active`; the workflow made no stop/start calls.
+- [x] **Step 6: Record** — Append all three results to the smoke-results doc; update the memory note `~/.claude/projects/-home-hathach-code-tinyusb/memory/ci-rig-stop-actions-runner.md` to describe the lock protocol (with the caveat that CI enforces it only after this branch merges to master); commit the smoke-results doc.
 
 ### Task 17: Smoke test — `/pre-pr` end-to-end (MAIN SESSION ONLY)
 
-- [ ] **Step 1: Run** — Invoke the `pre-pr` skill on this branch (its diff is docs + `.claude/` only, so expect the minimal path: software-only, `boards = [stm32f407disco]`).
-- [ ] **Step 2: Verify** — The skill correctly detects "no C changes", runs `full-check` with the minimal args, and produces the per-stage summary + verdict.
-- [ ] **Step 3: Record** — Append to the smoke-results doc; commit.
+- [x] **Step 1: Run** — Invoke the `pre-pr` skill on this branch (its diff is docs + `.claude/` only, so expect the minimal path: software-only, `boards = [stm32f407disco]`).
+- [x] **Step 2: Verify** — The skill correctly detects "no C changes", runs `full-check` with the minimal args, and produces the per-stage summary + verdict.
+- [x] **Step 3: Record** — Append to the smoke-results doc; commit.
 
 ### Task 18: Smoke test — `pr-babysit` dry run (MAIN SESSION ONLY)
 
-- [ ] **Step 1: Pick a target** — `gh pr list --limit 10 --json number,title,headRefName` — choose an open PR with completed CI and at least one bot review comment; check out its branch in a THROWAWAY worktree (`git worktree add /tmp/prsmoke <headRef>` after `git fetch`), and run from there so fix edits can't dirty this branch.
-- [ ] **Step 2: Run** — Invoke Workflow from that checkout: `{ name: 'pr-babysit', args: { pr: <N>, maxCycles: 1, autoPush: false } }`
-- [ ] **Step 3: Verify** — Triage classifies CI checks plausibly (compare with `gh pr checks <N>` yourself); each bot finding has a reasoned verdict (spot-check one against the code); result has `dryRun: true` if fixes were produced, and NOTHING was committed or pushed (`git -C /tmp/prsmoke status`, `gh pr view <N> --json comments` unchanged).
-- [ ] **Step 4: Clean up** — `git worktree remove --force /tmp/prsmoke`.
-- [ ] **Step 5: Record** — Append to the smoke-results doc; commit.
+- [x] **Step 1: Pick a target** — `gh pr list --limit 10 --json number,title,headRefName` — choose an open PR with completed CI and at least one bot review comment; check out its branch in a THROWAWAY worktree (`git worktree add /tmp/prsmoke <headRef>` after `git fetch`), and run from there so fix edits can't dirty this branch.
+- [x] **Step 2: Run** — Invoke Workflow from that checkout: `{ name: 'pr-babysit', args: { pr: <N>, maxCycles: 1, autoPush: false } }`
+- [x] **Step 3: Verify** — Triage classifies CI checks plausibly (compare with `gh pr checks <N>` yourself); each bot finding has a reasoned verdict (spot-check one against the code); result has `dryRun: true` if fixes were produced, and NOTHING was committed or pushed (`git -C /tmp/prsmoke status`, `gh pr view <N> --json comments` unchanged).
+- [x] **Step 4: Clean up** — `git worktree remove --force /tmp/prsmoke`.
+- [x] **Step 5: Record** — Append to the smoke-results doc; commit.
 
 ---
 
@@ -1294,7 +1302,7 @@ git commit --no-verify -m "feat: add /pre-pr skill entry point"
 **Interfaces:**
 - Produces (consumed by `hil-operator` agent, Task 20's guard shares the same lock files): CLI `hold <board...> [--all] [--config PATH] --reason TEXT` / `release <board...> [--all]` / `status`. Lock files: `/tmp/tinyusb-hil-locks/<board>.lock`, exclusive `fcntl.flock` held by a background holder process; JSON `{pid, reason, since}` written into the file.
 
-- [ ] **Step 1: Write the tool**
+- [x] **Step 1: Write the tool**
 
 Write `test/hil/board_lock.py` with exactly this content (then `chmod +x test/hil/board_lock.py`):
 
@@ -1493,7 +1501,7 @@ if __name__ == '__main__':
     main()
 ```
 
-- [ ] **Step 2: Test the lock lifecycle**
+- [x] **Step 2: Test the lock lifecycle**
 
 Run each line and check the expectation before the next:
 
@@ -1521,7 +1529,7 @@ python3 test/hil/board_lock.py release fakeboard                             # -
 rm -f /tmp/tinyusb-hil-locks/fakeboard.lock
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add test/hil/board_lock.py
@@ -1539,12 +1547,12 @@ git commit --no-verify -m "feat(hil): add per-board advisory lock tool"
 - Consumes: the lock files of Task 19 (`/tmp/tinyusb-hil-locks/<board>.lock`).
 - Produces: a locked board FAILS immediately with `board locked: <holder JSON>` (no flash); while testing, `hil_test.py` holds the board's flock and writes its own holder info (`reason: "hil_test.py"`) so the reverse conflict reports truthfully. CI semantics: job fails for locked boards, `re-run failed` passes after release.
 
-- [ ] **Step 1: Locate the per-board entry point**
+- [x] **Step 1: Locate the per-board entry point**
 
 Run: `grep -n "Pool(\|\.map\|\.imap\|def test_board\|def run_board" test/hil/hil_test.py`
 Identify the function the `multiprocessing.Pool` maps over the board list (each worker process handles one board's flash+test) and how it reports failure (inspect how a flash error is reported/raised so the locked case matches that convention exactly).
 
-- [ ] **Step 2: Add the guard**
+- [x] **Step 2: Add the guard**
 
 Add near the top of `hil_test.py` (module level, after existing imports — `fcntl` and `os` may need importing):
 
@@ -1609,7 +1617,7 @@ finally:
 
 Match indentation and the file's existing style exactly; keep the diff minimal (guard function + one try/finally wrap).
 
-- [ ] **Step 3: Test the locked path (no hardware touched)**
+- [x] **Step 3: Test the locked path (no hardware touched)**
 
 ```bash
 python3 test/hil/board_lock.py hold raspberry_pi_pico --reason "guard test"
@@ -1618,12 +1626,12 @@ python3 test/hil/board_lock.py release raspberry_pi_pico
 ```
 Expected: the run fails FAST (seconds, no JLink/flasher invocation in output), the board's failure message contains `board locked: {"pid": ..., "reason": "guard test", ...}`, exit code non-zero. (The unlocked happy path is exercised on real hardware in Task 16.)
 
-- [ ] **Step 4: Sanity-check no syntax damage**
+- [x] **Step 4: Sanity-check no syntax damage**
 
 Run: `python3 -m py_compile test/hil/hil_test.py && echo OK`
 Expected: `OK`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add test/hil/hil_test.py
@@ -1637,7 +1645,7 @@ git commit --no-verify -m "feat(hil): fail fast on dev-locked boards instead of 
 **Files:**
 - Modify: `.claude/skills/hil/SKILL.md` (replace the "Stop the CI runner first" section, currently lines 17–29)
 
-- [ ] **Step 1: Replace the runner-stop section**
+- [x] **Step 1: Replace the runner-stop section**
 
 In `.claude/skills/hil/SKILL.md`, replace the entire section from the heading `## Stop the CI runner first (on \`ci\`)` up to (not including) `## Prerequisites` with:
 
@@ -1663,12 +1671,12 @@ python3 test/hil/board_lock.py release BOARD [BOARD...]
 - Caveat until this branch merges to master: CI's checkout of `hil_test.py` does not yet enforce locks — keep dev hardware sessions short and check `gh run list --status in_progress` first.
 ````
 
-- [ ] **Step 2: Verify**
+- [x] **Step 2: Verify**
 
 Run: `grep -n "svc.sh stop" .claude/skills/hil/SKILL.md; grep -c "board_lock.py" .claude/skills/hil/SKILL.md`
 Expected: no `svc.sh stop` occurrences remain; `board_lock.py` appears ≥ 3 times.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add .claude/skills/hil/SKILL.md

@@ -15,7 +15,7 @@ You operate physical USB test hardware. These repo skills are your source of tru
 
 The GitHub Actions runner keeps running during your work. Per-board flock locks in `/tmp/tinyusb-hil-locks/` arbitrate the hardware; CI's `hil_test.py` fails fast on locked boards (re-runnable later).
 
-- `python3 test/hil/hil_test.py ...` runs: do NOT pre-hold those boards — `hil_test.py` self-locks each board for its flash+test (pre-holding would deadlock it).
+- `python3 test/hil/hil_test.py ...` runs: do NOT pre-hold those boards — `hil_test.py` self-locks each board for its flash+test and would fail fast with `board locked` against your own hold.
 - ANY other hardware action (JLinkExe/openocd/GDB, manual flash, usbtest.py, serial poking): hold first, release when done — release is mandatory cleanup (a crashed holder auto-releases via kernel flock, but do not rely on it):
   ```bash
   python3 test/hil/board_lock.py hold <board...> --reason "<task>"
@@ -30,7 +30,7 @@ The GitHub Actions runner keeps running during your work. Per-board flock locks 
 
 - HIL runs take 2–5 min per board: use Bash timeouts >= 20 min (1200000 ms) and NEVER cancel early.
 - One hardware action at a time. You are never run concurrently with another hil-operator.
-- On test failure: retry once with `-v` appended. If a board/fixture stops enumerating or tools hang in D state, consult usb-recover and capture `dmesg | tail -50` into `detail`; set `wedged` true.
+- On test failure: retry once with `-v -r 1` appended (one verbose attempt for diagnosis — the first run already did the flake-retries). If a board/fixture stops enumerating or tools hang in D state, consult usb-recover and capture `dmesg | tail -50` into `detail`; set `wedged` true.
 
 ## Output contract
 

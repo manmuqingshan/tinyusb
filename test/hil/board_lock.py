@@ -3,12 +3,13 @@
 
 Arbitrates board access between dev sessions and CI's hil_test.py without
 stopping the actions-runner. Locks are kernel flocks: the kernel releases
-them automatically when the holder process dies, so stale locks are
-impossible (/tmp also clears on reboot).
+them automatically when the holder process dies, and holders clear their
+lock-file record on release so records stay truthful (/tmp also clears on
+reboot).
 
 Usage:
   board_lock.py hold BOARD [BOARD...] --reason TEXT
-  board_lock.py hold --all [--config test/hil/tinyusb.json] --reason TEXT
+  board_lock.py hold --all [--config CONFIG.json] --reason TEXT
   board_lock.py release BOARD [BOARD...] | release --all
   board_lock.py status
 
@@ -69,11 +70,9 @@ def is_locked(board: str) -> bool:
 
 def cmd_hold(boards, reason):
     os.makedirs(LOCK_DIR, exist_ok=True)
-    already = [b for b in boards if is_locked(b)]
-    if already:
-        for b in already:
-            print(f'ERROR: {b} already locked: {read_info(b)}', file=sys.stderr)
-        return 1
+    # No pre-check: the holder's own LOCK_NB flock is the only authority — a
+    # recorded pid may be stale or recycled (e.g. a live hil_test.py worker
+    # that already released this board's flock but not its record).
     # The holder signals success through this pipe. A generic is_locked()
     # poll would be fooled by a RIVAL invocation's flock — only the holder
     # itself knows whether it won every board.
@@ -88,7 +87,11 @@ def cmd_hold(boards, reason):
         if ok:
             print(f'held: {", ".join(boards)}')
             return 0
-        print('ERROR: holder failed to acquire locks (lost a race?)', file=sys.stderr)
+        for b in boards:
+            info = read_info(b)
+            if info:
+                print(f'ERROR: {b} locked: {info}', file=sys.stderr)
+        print('ERROR: holder failed to acquire locks', file=sys.stderr)
         return 1
     # intermediate child: detach, then spawn the actual holder
     os.setsid()
@@ -96,6 +99,10 @@ def cmd_hold(boards, reason):
         os._exit(0)
     # holder (grandchild): acquire all flocks, signal the parent, sleep until killed
     os.close(r_fd)
+    # Keep the success pipe clear of fds 0-2: invoked with stdio closed,
+    # os.pipe() can land there and the dup2 loop below would clobber it.
+    if w_fd <= 2:
+        w_fd = fcntl.fcntl(w_fd, fcntl.F_DUPFD, 3)
     # Detach stdio: a `hold` whose output is captured must see EOF when the
     # front-end exits — the immortal holder must not keep that pipe open.
     devnull = os.open(os.devnull, os.O_RDWR)
@@ -125,31 +132,71 @@ def cmd_hold(boards, reason):
         os._exit(1)  # lost a race; parent reports the failure
     os.write(w_fd, b'1')
     os.close(w_fd)
-    signal.signal(signal.SIGTERM, lambda *_: os._exit(0))
+
+    def _bow_out(*_):
+        # clear the records before dying so read_info/status stay truthful
+        # (the kernel drops the flocks themselves on exit either way)
+        for h in handles:
+            try:
+                h.truncate(0)
+            except OSError:
+                pass
+        os._exit(0)
+
+    signal.signal(signal.SIGTERM, _bow_out)
     while True:
         signal.pause()
 
 
 def cmd_release(boards):
-    pids = set()
+    rc = 0
+    victims = set()
     for b in boards:
-        if not is_locked(b):
+        try:
+            fd = os.open(lock_path(b), os.O_RDWR)
+        except OSError:
+            continue  # no lock file (or another user's): nothing we can release
+        fh = os.fdopen(fd, 'r+')
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            # flock genuinely held — never SIGTERM on a mere pid record: the
+            # pid may be recycled, or a live worker that already moved on.
+            fh.close()
+            info = read_info(b) or {}
+            pid = info.get('pid')
+            if info.get('reason') == 'hil_test.py':
+                print(f'ERROR: {b} is mid-test by hil_test.py (pid {pid}) — not killing a '
+                      'CI run; wait for it to finish', file=sys.stderr)
+                rc = 1
+            elif isinstance(pid, int) and pid > 0:
+                victims.add(pid)
+            else:
+                print(f'ERROR: {b} is held but its record is unreadable', file=sys.stderr)
+                rc = 1
             continue
-        info = read_info(b) or {}
-        if info.get('pid'):
-            pids.add(info['pid'])
-    for holder in sorted(pids):
+        # flock was free: only a stale record remained — clear it
+        try:
+            fh.truncate(0)
+        except OSError:
+            pass
+        fh.close()
+    for holder in sorted(victims):
         try:
             os.kill(holder, signal.SIGTERM)
             print(f'released holder pid {holder}')
         except ProcessLookupError:
             pass
+        except PermissionError:
+            print(f'ERROR: holder pid {holder} belongs to another user — cannot signal it',
+                  file=sys.stderr)
+            rc = 1
     time.sleep(0.3)
     still = [b for b in boards if is_locked(b)]
     if still:
         print(f'ERROR: still locked: {", ".join(still)}', file=sys.stderr)
         return 1
-    return 0
+    return rc
 
 
 def cmd_status():
@@ -176,7 +223,10 @@ def main():
     p_hold = sub.add_parser('hold')
     p_hold.add_argument('boards', nargs='*')
     p_hold.add_argument('--all', action='store_true')
-    p_hold.add_argument('--config', default='test/hil/tinyusb.json')
+    p_hold.add_argument('--config',
+                        default=os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                             'tinyusb.json'),
+                        help='board roster JSON (default: tinyusb.json beside this script)')
     p_hold.add_argument('--reason', required=True)
     p_rel = sub.add_parser('release')
     p_rel.add_argument('boards', nargs='*')

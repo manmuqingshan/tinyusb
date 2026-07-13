@@ -18,7 +18,7 @@ Default to **local**. Use **remote** only when on `htpc` and the user says `remo
 
 The `ci` rig also hosts a GitHub Actions runner that flashes boards and runs HIL as part of CI. Hardware access is arbitrated **per board** with kernel flocks in `/tmp/tinyusb-hil-locks/` — do NOT stop the runner service.
 
-- `hil_test.py` self-locks each board for the duration of its flash+test (holder reason `hil_test.py`). A locked board FAILS immediately (`FAILED (board locked: ...)`) without flashing — in CI, re-run the failed job once the lock is released.
+- `hil_test.py` self-locks each board for the duration of its flash+test (holder reason `hil_test.py`). A locked board fails immediately (`<board>  Failed: board locked: {holder info}`) without flashing — in CI, re-run the failed job once the lock is released.
 - If your `hold` fails and the holder's reason is `hil_test.py`, a CI job is mid-test on that board — wait a few minutes and retry rather than forcing.
 - For hardware work outside `hil_test.py` (JLink/GDB, manual flashing, `usbtest.py`, serial poking), hold the lock first:
 

@@ -75,8 +75,12 @@ def acquire_board_lock(board_name):
         fd = os.open(os.path.join(BOARD_LOCK_DIR, f'{board_name}.lock'),
                      os.O_RDWR | os.O_CREAT, 0o666)
         fh = os.fdopen(fd, 'r+')
-    except OSError:
-        return None  # odd lock dir (perms, path collision): proceed unlocked
+    except OSError as e:
+        # odd lock dir (perms, path collision): proceed unlocked, but say so —
+        # a silent fail-open is indistinguishable from the intentional bypass
+        print(f'warning: board lock unavailable for {board_name} ({e}); proceeding unlocked',
+              flush=True)
+        return None
     try:
         fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
@@ -1767,6 +1771,14 @@ def test_board(board: Board) -> tuple[str, int, list[str], list]:
         return name, err_count, sorted(set(failed_tests)), rows
     finally:
         if _lock_fh:
+            try:
+                # clear our pid record before dropping the flock: this worker
+                # process lives on (pool reuse), so a stale record would make
+                # board_lock.py's pid-liveness checks report a freed board as
+                # still locked for the rest of the run
+                _lock_fh.truncate(0)
+            except OSError:
+                pass
             _lock_fh.close()
 
 
@@ -1837,7 +1849,13 @@ def accumulate_report(mret: list, report_dir: Path, fresh: bool) -> str:
         if rows and not any('board-locked' in cells for _, cells in rows):
             # board ran for real this time: clear a stale lock-failure cell
             # (its row is keyed by board name; test rows may be variant names)
-            acc.get(name, {}).pop('board-locked', None)
+            stale = acc.get(name)
+            if stale is not None:
+                stale.pop('board-locked', None)
+                if not stale:
+                    # variant-keyed boards never repopulate the board-name row —
+                    # drop it or it renders as a blank ghost row
+                    del acc[name]
         for row_label, cells in rows:
             acc.setdefault(row_label, {}).update(cells)
 
@@ -1900,6 +1918,11 @@ def main() -> None:
     if len(boards) == 0:
         config_boards = [e for e in config['boards'] if e['name'] not in skip_boards]
     else:
+        unknown = [b for b in boards if b not in {e['name'] for e in config['boards']}]
+        if unknown:
+            # exiting 0 with 'No tests were run.' would read as a green HIL run
+            print(f'ERROR: board(s) not in {config_file.name}: {", ".join(unknown)}')
+            sys.exit(1)
         config_boards = [e for e in config['boards'] if e['name'] in boards]
 
     build_err = 0

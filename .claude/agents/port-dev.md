@@ -20,7 +20,7 @@ When changing dcd/hcd register logic, cross-check the MCU reference manual / dat
 
 ## Finish checklist (in order)
 
-1. Format only the lines you changed: `git clang-format` (no args — formats working-tree changes vs HEAD using the repo `.clang-format`). If it reformats anything, re-check your diff still builds.
+1. Format only the files you changed: `git clang-format -- <file...>` (list your edited files explicitly — bare `git clang-format` formats the WHOLE working-tree diff, including other concurrent workers' in-flight edits in a shared checkout). If it reformats anything, re-check your diff still builds.
 2. Verify with a targeted build of `device/cdc_msc` for the board named in your task (or pick one from `hw/bsp/<family>/boards/` whose family uses your scope). Use a unique build dir to survive parallel siblings:
    ```bash
    BUILD=$(mktemp -d /tmp/portdev-<BOARD>-XXXX)

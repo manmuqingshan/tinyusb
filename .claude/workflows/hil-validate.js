@@ -6,7 +6,7 @@ export const meta = {
 }
 
 // args: { boards: string[], force?: boolean }
-if (typeof args === 'string') args = JSON.parse(args)  // tolerate stringified invocation args
+if (typeof args === 'string') { try { args = JSON.parse(args) } catch { /* not JSON: shape check below reports it */ } }
 if (!args || !Array.isArray(args.boards) || args.boards.length === 0) {
   throw new Error('args must be { boards: string[], force? } with examples/cmake-build-<board> already built')
 }
@@ -27,7 +27,7 @@ const runBoard = (b) => agent(
     : 'If the run fails because the board lock is held (a dev session or concurrent CI job), report pass=false and set detail to start EXACTLY with "board locked:" followed by the holder JSON verbatim — never force the lock. ') +
   'Reserve the phrase "board locked" strictly for lock contention; describe a frozen or non-enumerating board as "unresponsive" instead. ' +
   `Firmware is in examples/cmake-build-${b}. Use the config for this host (hostname first), single-board flag -b ${b}, Bash timeout >= 20 min, never cancel early. ` +
-  'On non-lock failures retry once with -v. wedged=true if the board/fixture is unresponsive after the run (capture dmesg | tail -50 into detail).',
+  'On non-lock failures retry once with -v -r 1 (one verbose attempt for diagnosis — the first run already did the flake-retries). wedged=true if the board/fixture is unresponsive after the run (capture dmesg | tail -50 into detail).',
   { label: `hil:${b}`, phase: 'HIL', agentType: 'hil-operator', schema: HIL },
 )
 
@@ -57,4 +57,4 @@ if (wedged.length) log(`WEDGED boards needing usb-recover: ${wedged.join(', ')}`
 // session to ask: force (re-invoke with force: true), wait, or accept.
 const locked = args.force ? [] : results.filter(r => !r.pass && r.detail.startsWith('board locked')).map(r => r.board)
 if (locked.length) log(`still locked after retry: ${locked.join(', ')} — ask the user: force / keep waiting / accept`)
-return { pass: results.length === args.boards.length && results.every(r => r.pass), results, wedged, locked }
+return { pass: results.every(r => r.pass), results, wedged, locked }

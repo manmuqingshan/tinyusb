@@ -9,7 +9,7 @@ export const meta = {
 }
 
 // args: { dirs: string[], dimensions?: string[], question?: string }
-if (typeof args === 'string') args = JSON.parse(args)  // tolerate stringified invocation args
+if (typeof args === 'string') { try { args = JSON.parse(args) } catch { /* not JSON: shape check below reports it */ } }
 if (!args || !Array.isArray(args.dirs) || args.dirs.length === 0) {
   throw new Error('args must be { dirs: string[], dimensions?, question? }')
 }
@@ -19,6 +19,11 @@ const DIMS = args.question ? [args.question] : (args.dimensions || [
   'register use vs datasheet and MCU errata: cross-check the reference manual AND errata sheets in $HOME/Documents/calibre-library; a missing erratum workaround is a finding',
   'style: repo conventions (TU_ASSERT, no dynamic allocation, include order, naming)',
 ])
+if (!DIMS.length) {
+  // [] is truthy, so `dimensions: []` would silently review nothing and
+  // return a verdict indistinguishable from a genuinely clean pass
+  throw new Error('dimensions resolved to an empty list — pass a non-empty array or omit it for the defaults')
+}
 const short = (s) => s.replace(/\/+$/, '').split('/').slice(-2).join('/')
 
 const FINDINGS = {
