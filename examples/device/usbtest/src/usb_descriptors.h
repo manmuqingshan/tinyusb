@@ -57,7 +57,13 @@
   #define USBTEST_INT_EP_MPS_FS  64
   #define USBTEST_ISO_EP_MPS_FS  128
 #endif
-#define USBTEST_INT_EP_MPS_HS  512
+// RUSB2 (Renesas RA) interrupt pipes 6-9 have a fixed 64-byte single buffer at any speed
+// (RA6M5 UM R01UH0891 sec 29.1: "Pipes 6 to 9: Interrupt transfer with 64-byte single buffer").
+#if TU_CHECK_MCU(OPT_MCU_RAXXX)
+  #define USBTEST_INT_EP_MPS_HS  64
+#else
+  #define USBTEST_INT_EP_MPS_HS  512
+#endif
 #define USBTEST_ISO_EP_MPS_HS  512
 
 // Compile-time capability maximum: sizes the source buffers / vendor epbufs for the largest
