@@ -32,7 +32,16 @@
 //   2: + vendor control 0x5b/0x5c (ctrl_out)
 //   3: + interrupt source/sink
 //   4: + isochronous source/sink
-#define USBTEST_TIER  4
+// Default is the full tier 4; a board whose DCD cannot serve a tier lowers it here
+// (BOARD_<NAME> is defined by both build systems) and the host battery follows.
+#ifndef USBTEST_TIER
+  #if defined(BOARD_RA2A1_EK)
+    // RA2A1's RUSB2 instance has no isochronous pipe (other RA parts have pipes 1-2)
+    #define USBTEST_TIER  3
+  #else
+    #define USBTEST_TIER  4
+  #endif
+#endif
 
 // Interrupt/isochronous endpoint max packet sizes, must match the configuration descriptor.
 // TUD_OPT_HIGH_SPEED is a compile-time capability flag, NOT the live bus speed, so the full-speed

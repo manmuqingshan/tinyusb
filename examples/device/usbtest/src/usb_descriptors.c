@@ -67,21 +67,29 @@ enum {
 
 // Vendor interface, Gadget-Zero style altsettings: alt 0 carries no endpoints (an
 // isochronous endpoint must not claim bandwidth in the default altsetting, USB 2.0
-// 5.6.3), alt 1 carries bulk + interrupt + isochronous IN/OUT. The host usbtest
-// driver skips altsettings without pipes and selects alt 1 itself. No TUD_ macro
-// covers this layout, hand-rolled.
-#define USBTEST_DESC_LEN  (9 + 9 + 6*7)
+// 5.6.3), alt 1 carries bulk + interrupt (+ isochronous IN/OUT at tier 4). The host
+// usbtest driver skips altsettings without pipes and selects alt 1 itself. No TUD_
+// macro covers this layout, hand-rolled.
+#if USBTEST_TIER >= 4
+  #define USBTEST_EP_COUNT  6
+  #define USBTEST_ISO_EPS(_isoout, _isoin, _iso_mps, _iso_interval) \
+    ,7, TUSB_DESC_ENDPOINT, _isoout, (uint8_t)(TUSB_XFER_ISOCHRONOUS | (uint8_t)(TUSB_ISO_EP_ATT_ASYNCHRONOUS)), U16_TO_U8S_LE(_iso_mps), _iso_interval,\
+    7, TUSB_DESC_ENDPOINT, _isoin, (uint8_t)(TUSB_XFER_ISOCHRONOUS | (uint8_t)(TUSB_ISO_EP_ATT_ASYNCHRONOUS)), U16_TO_U8S_LE(_iso_mps), _iso_interval
+#else
+  #define USBTEST_EP_COUNT  4
+  #define USBTEST_ISO_EPS(_isoout, _isoin, _iso_mps, _iso_interval)
+#endif
+#define USBTEST_DESC_LEN  (9 + 9 + USBTEST_EP_COUNT*7)
 #define USBTEST_DESCRIPTOR(_itfnum, _stridx, _epout, _epin, _bulk_mps, _intout, _intin, _int_mps, _int_interval, _isoout, _isoin, _iso_mps, _iso_interval) \
   /* alt 0: zero bandwidth, no endpoints */\
   9, TUSB_DESC_INTERFACE, _itfnum, 0, 0, TUSB_CLASS_VENDOR_SPECIFIC, 0x00, 0x00, _stridx,\
   /* alt 1: full source/sink set */\
-  9, TUSB_DESC_INTERFACE, _itfnum, 1, 6, TUSB_CLASS_VENDOR_SPECIFIC, 0x00, 0x00, _stridx,\
+  9, TUSB_DESC_INTERFACE, _itfnum, 1, USBTEST_EP_COUNT, TUSB_CLASS_VENDOR_SPECIFIC, 0x00, 0x00, _stridx,\
   7, TUSB_DESC_ENDPOINT, _epout, TUSB_XFER_BULK, U16_TO_U8S_LE(_bulk_mps), 0,\
   7, TUSB_DESC_ENDPOINT, _epin, TUSB_XFER_BULK, U16_TO_U8S_LE(_bulk_mps), 0,\
   7, TUSB_DESC_ENDPOINT, _intout, TUSB_XFER_INTERRUPT, U16_TO_U8S_LE(_int_mps), _int_interval,\
-  7, TUSB_DESC_ENDPOINT, _intin, TUSB_XFER_INTERRUPT, U16_TO_U8S_LE(_int_mps), _int_interval,\
-  7, TUSB_DESC_ENDPOINT, _isoout, (uint8_t)(TUSB_XFER_ISOCHRONOUS | (uint8_t)(TUSB_ISO_EP_ATT_ASYNCHRONOUS)), U16_TO_U8S_LE(_iso_mps), _iso_interval,\
-  7, TUSB_DESC_ENDPOINT, _isoin, (uint8_t)(TUSB_XFER_ISOCHRONOUS | (uint8_t)(TUSB_ISO_EP_ATT_ASYNCHRONOUS)), U16_TO_U8S_LE(_iso_mps), _iso_interval
+  7, TUSB_DESC_ENDPOINT, _intin, TUSB_XFER_INTERRUPT, U16_TO_U8S_LE(_int_mps), _int_interval\
+  USBTEST_ISO_EPS(_isoout, _isoin, _iso_mps, _iso_interval)
 
 #define CONFIG_TOTAL_LEN    (TUD_CONFIG_DESC_LEN + USBTEST_DESC_LEN)
 

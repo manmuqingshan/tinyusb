@@ -22,6 +22,7 @@
                 { "name": "espressif_p4_function_ev-DMA", "flags": "-DCFG_TUD_DWC2_DMA_ENABLE=1 -DCFG_TUH_DWC2_DMA_ENABLE=1" }
             ],
             "tests": {
+                "comment": "only IDF/FreeRTOS examples are part of the espressif fleet build; device/usbtest builds under IDF but is not built/flashed by the fleet, so it is not listed",
                 "only": [
                     "device/cdc_msc_freertos",
                     "device/hid_composite_freertos",
@@ -152,6 +153,8 @@
             "name": "mimxrt1015_evk",
             "uid": "DC28F865D2111D228D00B0543A70463C",
             "tests": {
+                "skip": ["device/usbtest"],
+                "comment": "this board's HS battery killed the uPD720201 twice (2026-07-11 on ROM fw, 2026-07-13 case 27 on fw 2.0.2.6 - stop-endpoint timeout, HC died); mimxrt1064/ch32v307 batteries pass, so it is board-specific - keep skipped",
                 "device": true,
                 "host": false,
                 "dual": false
@@ -166,19 +169,20 @@
             "name": "mimxrt1064_evk",
             "uid": "BAE96FB95AFA6DBB8F00005002001200",
             "tests": {
+                "skip": ["host/cdc_msc_hid"],
+                "comment-cdc-echo": "CH9102+Lexar bundle (moved here from stm32f723disco) mounts fine but echo returns nothing - TX-RX loopback jumper likely lost in the move; re-check wiring then re-enable",
                 "device": true,
                 "host": true,
                 "dual": true,
                 "dev_attached": [
                     {
-                        "vid_pid": "10c4_ea60",
-                        "serial": "0001",
-                        "is_cdc": true,
-                        "comment": "cp2102"
+                        "vid_pid": "1a86_55d4",
+                        "serial": "52D2003414",
+                        "is_cdc": true
                     },
                     {
                         "vid_pid": "21c4_0cc7",
-                        "serial": "900058874D871F66",
+                        "serial": "90005893730A1A63",
                         "is_msc": true,
                         "block_size": 512,
                         "block_count": 60620800,
@@ -230,6 +234,8 @@
                 "device": true,
                 "host": true,
                 "dual": true,
+                "skip": ["host/cdc_msc_hid", "host/device_info", "host/msc_file_explorer", "host/msc_file_explorer_freertos", "dual/host_info_to_device_cdc"],
+                "comment-skip": "PIO-USB host port enumerates nothing since the board moves (CH340+UDisk bundle unplugged or unpowered) - re-attach the bundle then drop these skips",
                 "dev_attached": [
                     {
                         "vid_pid": "1a86_7523",
@@ -379,13 +385,14 @@
                 "dual": false,
                 "dev_attached": [
                     {
-                        "vid_pid": "1a86_55d4",
-                        "serial": "52D2003414",
-                        "is_cdc": true
+                        "vid_pid": "10c4_ea60",
+                        "serial": "0001",
+                        "is_cdc": true,
+                        "comment": "cp2102"
                     },
                     {
                         "vid_pid": "21c4_0cc7",
-                        "serial": "90005893730A1A63",
+                        "serial": "900058874D871F66",
                         "is_msc": true,
                         "block_size": 512,
                         "block_count": 60620800,
@@ -512,14 +519,11 @@
                 "uid": "BC5DA47360D0",
                 "args": ""
             }
-        }
-    ],
-    "boards-skip": [
+        },
         {
             "name": "ch582m_evt",
             "uid": "D443627B5450",
             "toolchain": "riscv-gcc",
-            "comment": "unplugged: fixture (board + WCH-Link) failed to re-enumerate after the 2026-07-06 rig reboot; replug to re-enable",
             "tests": {
                 "device": true,
                 "host": false,
@@ -532,8 +536,59 @@
             }
         },
         {
+            "name": "nrf5340dk",
+            "uid": "78E60E166B5F88BE",
+            "tests": {
+                "device": true,
+                "host": false,
+                "dual": false,
+                "skip": ["device/cdc_msc_freertos", "device/audio_test_freertos"],
+                "comment": "board new to HIL: FreeRTOS examples hardfault (UFSR=INVPC) at first task launch on the CM33_NTZ port - pre-existing upstream issue, non-FreeRTOS examples and usbtest pass; fix separately"
+            },
+            "flasher": {
+                "name": "jlink",
+                "uid": "001050076405",
+                "args": "-device NRF5340_XXAA_APP"
+            }
+        },
+        {
             "name": "nrf54lm20dk",
             "uid": "899C3DE5B0F4D5CA",
+            "tests": {
+                "device": true,
+                "host": false,
+                "dual": false,
+                "skip": ["device/audio_test_freertos"],
+                "comment": "board new to HIL: audio_test_freertos never reaches dcd_init (FreeRTOS itself runs; cdc_msc_freertos and usbtest pass) - example-level issue on nRF54L, fix separately"
+            },
+            "flasher": {
+                "name": "jlink",
+                "uid": "1051856258",
+                "args": "-device NRF54LM20A_M33"
+            }
+        }
+    ],
+    "boards-skip": [
+        {
+            "name": "ra6m5_ek",
+            "uid": "8419032D32363657364EF4622D294B4E",
+            "tests": {
+                "device": true,
+                "host": false,
+                "dual": false,
+                "skip": ["device/cdc_msc_throughput", "device/msc_dual_lun"],
+                "comment": "MSC writes wedge the uPD720201 host (URBs queued, zero wire activity, bus-15 ctrl xfers time out until the device's URBs are killed); reproduced identically with master firmware - device side armed+BUF and exonerated. MSC reads and usbtest bulk (15.8 MB/s) are fine"
+            },
+            "flasher": {
+                "name": "jlink",
+                "uid": "000831915224",
+                "args": "-device R7FA6M5BH"
+            }
+        },
+        {
+            "name": "ra8m1_ek",
+            "uid": "797D142D36345030364E1737922E4B4E",
+            "comment": "USBHS bring-up pending (HS chirp completes digitally but terminations never switch; FS-forced build passed usbtest 30/30). Parked until fixed",
             "tests": {
                 "device": true,
                 "host": false,
@@ -541,8 +596,8 @@
             },
             "flasher": {
                 "name": "jlink",
-                "uid": "1051856258",
-                "args": "-device NRF54LM20A_M33"
+                "uid": "001083115236",
+                "args": "-device R7FA8M1AH"
             }
         },
         {

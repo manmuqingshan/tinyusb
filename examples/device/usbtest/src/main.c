@@ -61,7 +61,9 @@ static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
 // unintended short packet or ZLP.
 static uint8_t const tx_chunk[CFG_TUD_VENDOR_TX_EPSIZE];
 static uint8_t const int_tx_chunk[USBTEST_INT_EP_MPS];
+#if USBTEST_TIER >= 4
 static uint8_t const iso_tx_chunk[USBTEST_ISO_EP_MPS];
+#endif
 
 // Interrupt/iso submit one packet per (micro)frame, sized to the NEGOTIATED speed's mps — a
 // high-speed build enumerated at full speed must submit the FS length, not the HS-capacity buffer
@@ -69,9 +71,11 @@ static uint8_t const iso_tx_chunk[USBTEST_ISO_EP_MPS];
 static inline uint16_t usbtest_int_len(void) {
   return (tud_speed_get() == TUSB_SPEED_HIGH) ? USBTEST_INT_EP_MPS_HS : USBTEST_INT_EP_MPS_FS;
 }
+#if USBTEST_TIER >= 4
 static inline uint16_t usbtest_iso_len(void) {
   return (tud_speed_get() == TUSB_SPEED_HIGH) ? USBTEST_ISO_EP_MPS_HS : USBTEST_ISO_EP_MPS_FS;
 }
+#endif
 
 //------------- prototypes -------------//
 void led_blinking_task(void* param);
@@ -125,10 +129,12 @@ static void usbtest_pump(void) {
       tud_vendor_int_write(int_tx_chunk, usbtest_int_len());
     }
 
+#if USBTEST_TIER >= 4
     tud_vendor_iso_read_xfer(); // isochronous sink
     if (tud_vendor_iso_write_available()) {
       tud_vendor_iso_write(iso_tx_chunk, usbtest_iso_len());
     }
+#endif
   }
 }
 
@@ -175,6 +181,7 @@ void tud_vendor_int_tx_cb(uint8_t idx, uint32_t sent_bytes) {
 
 // Isochronous pair: same discard/refill pumps; a completion may be a missed
 // frame, re-arm regardless
+#if USBTEST_TIER >= 4
 void tud_vendor_iso_rx_cb(uint8_t idx, const uint8_t* buffer, uint32_t bufsize) {
   (void) idx;
   (void) buffer;
@@ -187,6 +194,7 @@ void tud_vendor_iso_tx_cb(uint8_t idx, uint32_t sent_bytes) {
   (void) sent_bytes;
   tud_vendor_iso_write(iso_tx_chunk, usbtest_iso_len());
 }
+#endif
 
 //--------------------------------------------------------------------+
 // Vendor control requests (EP0)

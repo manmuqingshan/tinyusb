@@ -36,7 +36,9 @@ the ioctl then returns and the convoy unwinds on its own.
 
 **Not every controller supports FLR.** The Renesas uPD720201 (`0000:01:00.0`)
 has no reset method — `pci-reset` fails with `Inappropriate ioctl for device`
-(ENOTTY). On those, there is no clean D-state cure short of a **reboot**; do NOT
+(ENOTTY). On those, there is no clean software D-state cure — a VM reboot is NOT
+reliable (the MosChip downstream hubs latch up across the PCIe reset and need a
+physical replug); ask the operator for a full PVE host power cycle instead. Do NOT
 fall through to `pci-rebind` (see next).
 
 **`pci-rebind` can strand the controller driverless.** Its unbind succeeds but,
@@ -44,8 +46,8 @@ with a D-state process still holding a URB, the *re-bind* hangs — leaving the
 PCI device with **no driver** (`/sys/bus/pci/devices/<addr>/driver` gone) and the
 whole controller's fixtures offline. A second `pci-rebind` then dies with "no
 driver bound". Recover with `pci-bind <addr>` (re-attaches the xHCI driver);
-if that also hangs because the D-state URB is unkillable, **reboot** is the only
-cure. The Renesas binds via `xhci-pci-renesas` (firmware loader), others via
+if that also hangs because the D-state URB is unkillable, only a full PVE host
+power cycle (operator action) recovers. The Renesas binds via `xhci-pci-renesas` (firmware loader), others via
 `xhci_hcd` — `pci-bind` auto-tries both, or pass the driver explicitly.
 
 **Ordering is critical.** `authorized`/`rebind`/`pci-rebind` all take the
@@ -53,7 +55,7 @@ per-device lock the stuck ioctl holds — they block and join the convoy, and
 soon every libusb tool (uhubctl, JLinkExe) hangs too. Worse, a blocked
 `pci-rebind` grabs the PCI device lock on its way in, which `pci-reset` also
 needs: once a rebind has been attempted and is stuck, even FLR deadlocks and
-**only a rig reboot recovers**. pci-reset first (if supported), and never
+**only a full PVE host power cycle recovers**. pci-reset first (if supported), and never
 `pci-rebind` a D-state wedge.
 
 **If no** (device merely dead or silent), escalate gently:
@@ -82,10 +84,10 @@ port power switching — uhubctl reports "No compatible devices" there.
 - Command produces no output and doesn't return → it is blocked on the device
   lock: a D-state holder exists; see above.
 - Trying `pci-rebind` on a D-state hang — its re-bind hangs and strands the
-  controller **driverless**; recover with `pci-bind <addr>`, or reboot if the
-  D-state URB is unkillable. Use `pci-reset` (if supported) for D-state, never
+  controller **driverless**; recover with `pci-bind <addr>`, or a PVE host power
+  cycle if the D-state URB is unkillable. Use `pci-reset` (if supported) for D-state, never
   `pci-rebind`.
 - Running `pci-reset` on a controller without FLR support (Renesas) → ENOTTY;
-  no recovery but reboot.
+  no software recovery — needs a PVE host power cycle.
 - A J-Link reset (`r; go`) does not disconnect a wedged DUT from the host: the
   DWC2 soft-connect pullup stays up through a core halt, so stuck URBs stay stuck.

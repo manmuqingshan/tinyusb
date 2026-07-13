@@ -333,15 +333,11 @@ jobs:
           merge-multiple: true
 
       - name: Test on actual hardware
-        run: |
-          python3 test/hil/hil_test.py ${{ env.HIL_JSON }} $SKIP_BOARDS || \
-          (if [ -f "${{ env.HIL_JSON }}.skip" ]; then
-            SKIP_BOARDS=$(cat "${{ env.HIL_JSON }}.skip")
-            echo "Re-running with SKIP_BOARDS=$SKIP_BOARDS"
-            python3 test/hil/hil_test.py ${{ env.HIL_JSON }} $SKIP_BOARDS
-          else
-            exit 1
-          fi)
+        # Single attempt per test (--retry 1), no in-run second pass: a broken fixture
+        # fails fast instead of holding the runner (and other PRs' HIL jobs) for hours.
+        # hil_test.py still writes ${HIL_JSON}.skip, so a manual re-run attempt only
+        # retests what failed (see "Get Skip Boards from previous run").
+        run: python3 test/hil/hil_test.py --retry 1 ${{ env.HIL_JSON }} $SKIP_BOARDS
 
       - name: Upload HIL report
         if: always() && github.event_name == 'pull_request'
