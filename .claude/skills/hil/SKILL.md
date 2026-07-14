@@ -11,8 +11,14 @@ Run TinyUSB HIL tests on real boards. **Run `hostname` first** — it tells you 
 |------|--------------|------------------------|
 | `htpc` (dev PC) | `test/hil/local.json` | yes (large pool, `test/hil/tinyusb.json`) |
 | `ci` (the rig) | `test/hil/tinyusb.json` (large pool) | no — can't SSH to htpc, and boards are already local |
+| `hifiphile` (external rig) | `test/hil/hfp.json` | no outbound SSH to htpc/ci; SSH-reachable FROM both |
 
 Default to **local**. Use **remote** only when on `htpc` and the user says `remote`/`ci.lan`. Never attempt remote on `ci`.
+
+The `hifiphile` rig is externally hosted by TinyUSB maintainer hifiphile; its board pool is
+`test/hil/hfp.json` and its HIL runs are triggered by GitHub CI (the `hil-tinyusb (hfp.json)`
+matrix job). **Never run HIL against this rig during development unless the user explicitly
+asks for it.**
 
 ## Board locks — the CI runner keeps running
 
