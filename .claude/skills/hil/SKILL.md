@@ -14,19 +14,24 @@ Run TinyUSB HIL tests on real boards. **Run `hostname` first** — it tells you 
 
 Default to **local**. Use **remote** only when on `htpc` and the user says `remote`/`ci.lan`. Never attempt remote on `ci`.
 
-## Stop the CI runner first (on `ci`)
+## Board locks — the CI runner keeps running
 
-The `ci` rig also hosts a GitHub Actions runner that flashes boards and runs HIL as part of CI. If it fires while you are driving the hardware yourself — any HIL run, flashing, `test/hil/usbtest.py`, GDB, raw USB — it reflashes boards mid-test and churns the bus, producing spurious failures and even wedged devices.
+The `ci` rig also hosts a GitHub Actions runner that flashes boards and runs HIL as part of CI. Hardware access is arbitrated **per board** with kernel flocks in `/tmp/tinyusb-hil-locks/` — do NOT stop the runner service.
 
-**Before touching hardware on `ci`, stop the runner; restart it when done.** `svc.sh` is run with `sudo` but must be run **from the runner root** (`~/actions-runner`, plural), else it errors "Must run from runner root":
+- `hil_test.py` self-locks each board for the duration of its flash+test (holder reason `hil_test.py`). A locked board fails immediately (`<board>  Failed: board locked: {holder info}`) without flashing — in CI, re-run the failed job once the lock is released.
+- If your `hold` fails and the holder's reason is `hil_test.py`, a CI job is mid-test on that board — wait a few minutes and retry rather than forcing.
+- For hardware work outside `hil_test.py` (JLink/GDB, manual flashing, `usbtest.py`, serial poking), hold the lock first:
 
 ```bash
-(cd ~/actions-runner && sudo ./svc.sh stop)     # before any hardware/HIL action
-# ... flash / run hil_test.py / usbtest.py / GDB ...
-(cd ~/actions-runner && sudo ./svc.sh start)    # ALWAYS restart when finished
+python3 test/hil/board_lock.py hold BOARD [BOARD...] --reason "why"
+# ... hardware work ...
+python3 test/hil/board_lock.py release BOARD [BOARD...]
 ```
 
-Treat the restart as mandatory cleanup — leaving the runner stopped silently disables CI for the whole repo. Only applies on `ci` (htpc has no runner). Check state with `(cd ~/actions-runner && sudo ./svc.sh status)`.
+- Never pre-hold boards you are about to run `hil_test.py` on — it self-locks and would treat your own hold as a conflict.
+- Rig-wide operations (uhubctl power cycling, pci-rebind — bus renumbering) affect every board: `board_lock.py hold --all --reason "..."` first.
+- `board_lock.py status` lists holders. Locks auto-release when the holder process dies (kernel flock); `/tmp` clears on reboot.
+- Forcing past a lock: `HIL_NO_BOARD_LOCK=1 python3 test/hil/hil_test.py ...` bypasses the guard without killing the holder. Only with the user's explicit go-ahead — they accept the risk of colliding with whatever holds the board.
 
 ## Prerequisites
 
