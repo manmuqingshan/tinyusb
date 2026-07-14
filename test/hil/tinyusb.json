@@ -22,11 +22,12 @@
                 { "name": "espressif_p4_function_ev-DMA", "flags": "-DCFG_TUD_DWC2_DMA_ENABLE=1 -DCFG_TUH_DWC2_DMA_ENABLE=1" }
             ],
             "tests": {
-                "comment": "only IDF/FreeRTOS examples are part of the espressif fleet build; device/usbtest builds under IDF but is not built/flashed by the fleet, so it is not listed",
+                "comment": "espressif fleet build = IDF/FreeRTOS examples plus the IDF-buildable bare-metal-style ones tools/build.py allowlists (board_test, usbtest, video_capture)",
                 "only": [
                     "device/cdc_msc_freertos",
                     "device/hid_composite_freertos",
                     "device/audio_test_freertos",
+                    "device/usbtest",
                     "host/device_info",
                     "host/msc_file_explorer_freertos"
                 ],
@@ -66,6 +67,7 @@
                     "device/cdc_msc_freertos",
                     "device/hid_composite_freertos",
                     "device/audio_test_freertos",
+                    "device/usbtest",
                     "host/device_info",
                     "host/msc_file_explorer_freertos"
                 ],
@@ -153,8 +155,6 @@
             "name": "mimxrt1015_evk",
             "uid": "DC28F865D2111D228D00B0543A70463C",
             "tests": {
-                "skip": ["device/usbtest"],
-                "comment": "this board's HS battery killed the uPD720201 twice (2026-07-11 on ROM fw, 2026-07-13 case 27 on fw 2.0.2.6 - stop-endpoint timeout, HC died); mimxrt1064/ch32v307 batteries pass, so it is board-specific - keep skipped",
                 "device": true,
                 "host": false,
                 "dual": false
