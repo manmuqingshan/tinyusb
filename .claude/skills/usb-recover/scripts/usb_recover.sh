@@ -12,6 +12,11 @@
 #   sudo usb_recover.sh pci-bind   <pciaddr> [driver]  # bind a DRIVERLESS controller (e.g. after a pci-rebind
 #                                              # whose re-bind hung and left it unbound). Auto-tries the xHCI
 #                                              # drivers (xhci-pci-renesas, xhci_hcd) unless one is named.
+#   sudo usb_recover.sh hub-cycle  <busport>   # e.g. 13-1.6 -> uhubctl power-cycle of the port feeding it,
+#                                              # walking upstream (parent hub -> root port) until the device
+#                                              # re-enumerates. Ganged/fake-switching hubs may bounce ALL
+#                                              # siblings; self-powered hubs only reset their uplink, which
+#                                              # is why the walk ends at the root port (real xHCI ppps).
 #   sudo usb_recover.sh resolve    <devnode>   # e.g. /dev/ttyACM3 -> print its <busport> (no privilege needed)
 set -euo pipefail
 
@@ -97,6 +102,30 @@ case "$action" in
       done
       die "could not bind $target with a known xHCI driver; pass the driver explicitly"
     fi
+    ;;
+  hub-cycle)
+    [[ "$target" =~ $USBPATH_RE ]] || die "bad usb path: $target"
+    UHUBCTL=$(command -v uhubctl || echo /sbin/uhubctl)
+    [ -x "$UHUBCTL" ] || die "uhubctl not installed"
+    dev="$target"
+    while :; do
+      if [[ "$dev" =~ ^([0-9]+)-([0-9]+)$ ]]; then    # parent is the root hub
+        loc="${BASH_REMATCH[1]}"; port="${BASH_REMATCH[2]}"; up=""
+      else                                            # parent is a downstream hub
+        loc="${dev%.*}"; port="${dev##*.}"; up="$loc"
+      fi
+      echo "hub-cycle: power-cycling hub $loc port $port (feeds $dev)"
+      "$UHUBCTL" -l "$loc" -p "$port" -a cycle -d 5 -f || echo "  (uhubctl failed at $loc; walking up)"
+      for _ in $(seq 1 10); do
+        sleep 1
+        if [ -e "/sys/bus/usb/devices/$target/idVendor" ]; then
+          echo "recovered: $target re-enumerated"; exit 0
+        fi
+      done
+      [ -n "$up" ] || break
+      dev="$up"
+    done
+    die "hub-cycle: $target still not enumerated after cycling up to the root port"
     ;;
   pci-reset)
     [[ "$target" =~ $PCI_RE ]] || die "bad pci addr: $target"

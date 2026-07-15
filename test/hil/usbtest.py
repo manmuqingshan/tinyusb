@@ -152,17 +152,11 @@ def find_device(serial, first=False):
     return matches[0]
 
 
-def host_broken_cases(dev):
-    """Cases the DUT's upstream host controller cannot run: {case: reason}. Exits the
-    whole run instead if the host is a uPD720201 on pre-2.0.2.6 firmware (see below).
-    The MosChip MCS9990 (9710:9990) EHCI cannot run interrupt-OUT: its FRINDEX
-    register is buggy silicon (the kernel probes it with "applying MosChip
-    frame-index workaround") and ehci-hcd never keeps the int-OUT QH in the
-    hardware periodic schedule, so every int-OUT URB times out regardless of
-    bInterval/mps/size while the device sits armed. Verified A/B 2026-07-09,
-    same board+hub: EHCI FAIL (QH absent from the debugfs periodic schedule the
-    whole hang), OHCI companion PASS, xHCI fine; int-IN unaffected. Skip with a
-    visible SKIP so the battery self-heals once the DUT tree is back on an xHCI."""
+def check_host_compat(dev):
+    """Refuse to run when the DUT's upstream host controller is known-incompatible:
+    the MosChip MCS9990 (9710:9990) outright (buggy FRINDEX silicon: EHCI never
+    schedules int-OUT URBs and mangles unlinked reads - verified A/B 2026-07-09),
+    and the Renesas uPD720201/02 unless it runs firmware >= 2.0.2.6 (see below)."""
     for attempt in range(3):
         try:
             root = Path(f"/sys/bus/usb/devices/usb{int(dev['node'].split('/')[-2])}")
@@ -172,20 +166,17 @@ def host_broken_cases(dev):
             break
         except (OSError, ValueError):
             # transient sysfs error (e.g. racing a re-enumeration): retry so a blip doesn't
-            # silently run known-broken cases; if the probe truly fails, fail open but say so
+            # silently pass an incompatible host; if the probe truly fails, fail open but say so
             if attempt == 2:
                 print('warning: cannot probe the upstream host controller; '
-                      'known-broken-host cases will run instead of being skipped', file=sys.stderr)
-                return {}
+                      'skipping the host compatibility check', file=sys.stderr)
+                return
             time.sleep(1)
-    if drv.startswith('ehci') and vid_did == ('0x9710', '0x9990'):
-        return {
-            25: 'host EHCI (MosChip MCS9990) loses interrupt-OUT completions',
-            # Unlinking an in-progress read intermittently completes it as a short transfer
-            # (EREMOTEIO) instead of -ECONNRESET; device-side exonerated by TX counters (only
-            # full-mps loads, no ZLP). Passes on xHCI. Some boards dodge it by timing.
-            11: 'host EHCI (MosChip MCS9990) completes unlinked reads as short (EREMOTEIO)',
-        }
+    if vid_did == ('0x9710', '0x9990'):
+        sys.exit(f'REFUSING to run: DUT is behind a MosChip MCS9990 ({pci.name}), which is '
+                 'incompatible with usbtest: broken FRINDEX silicon - int-OUT URBs are never '
+                 'placed in the EHCI periodic schedule and unlinked reads complete as short '
+                 'transfers (EREMOTEIO). Move the DUT to an xHCI port.')
     if drv.startswith('xhci') and vid_did in (('0x1912', '0x0014'), ('0x1912', '0x0015')):
         # The Renesas uPD720201/uPD720202 must run its latest firmware (>= 2.0.2.6,
         # K2026090.mem; RAM-uploaded, so it reverts to ROM on every power cycle unless
@@ -215,7 +206,6 @@ def host_broken_cases(dev):
                      '< 0x00202609 (2.0.2.6) - its command ring dies under usbtest unlink '
                      'stress. Load the latest firmware (K2026090.mem; it is RAM-uploaded and '
                      'reverts to ROM on every power cycle).')
-    return {}
 
 
 def bind_usbtest(dev):
@@ -379,9 +369,9 @@ def main():
     if not args.json:
         print(info)
 
-    # probe the upstream controller before touching the device: an unsupported host
-    # (uPD720201 on pre-2.0.2.6 firmware) exits here, before any bind
-    broken = host_broken_cases(dev)
+    # probe the upstream controller before touching the device: an incompatible host
+    # (MosChip MCS9990, or uPD720201 on pre-2.0.2.6 firmware) exits here, before any bind
+    check_host_compat(dev)
 
     results = []
     unrecovered_hang = False
@@ -390,12 +380,6 @@ def main():
         set_pattern(0)  # tier 1 firmware sources zeros; also required by perf cases 27/28
 
         for num in cases:
-            if num in broken:
-                results.append({'num': num, 'name': CASE_NAMES[num], 'status': 'SKIP',
-                                'detail': broken[num]})
-                if not args.json:
-                    print(f"test {num:2d} {CASE_NAMES[num]:22s} SKIP   {broken[num]}")
-                continue
             results.append(run_case(num, dev, testusb, args.quick, args.timeout))
             r = results[-1]
             if not args.json:
@@ -447,16 +431,14 @@ def main():
         except SystemExit:
             pass
 
-    failed = [r for r in results if r['status'] not in ('PASS', 'SKIP')]
-    skipped = [r for r in results if r['status'] == 'SKIP']
-    ran = len(results) - len(skipped)
+    failed = [r for r in results if r['status'] != 'PASS']
+    ran = len(results)
     if args.json:
         print(json.dumps({'serial': dev['serial'], 'speed': dev['speed'], 'tier': tier,
                           'passed': ran - len(failed), 'failed': len(failed),
-                          'skipped': len(skipped), 'cases': results}, indent=2))
+                          'cases': results}, indent=2))
     else:
-        note = f", {len(skipped)} skipped (host limitation)" if skipped else ''
-        print(f"{ran - len(failed)}/{ran} passed{note}")
+        print(f"{ran - len(failed)}/{ran} passed")
         for r in failed:
             print(f"  FAILED test {r['num']}: {r.get('detail', '')}")
             if r.get('dmesg'):

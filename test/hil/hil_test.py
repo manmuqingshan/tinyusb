@@ -1734,13 +1734,10 @@ def test_device_usbtest(board):
     except (ValueError, KeyError, json.JSONDecodeError):
         raise AssertionError(f'usbtest did not run: {compact_output(out) or cmd_stdout_text(r.stderr)}')
 
-    skipped = int(data.get('skipped', 0))  # host-controller limitation (see usbtest.py host_broken_cases)
     total = passed + failed
-    if total == 0 and skipped > 0:
-        return 'skipped'  # every case host-skipped: a skip, not a 0/0 failure
     if failed == 0 and total > 0:
-        return f'{REPORT_CELL["pass"]} {passed}/{total}' + (f' +{skipped}skip' if skipped else '')
-    bad = [c.get('num') for c in data.get('cases', []) if c.get('status') not in ('PASS', 'SKIP')]
+        return f'{REPORT_CELL["pass"]} {passed}/{total}'
+    bad = [c.get('num') for c in data.get('cases', []) if c.get('status') != 'PASS']
     raise TestFail(f'usbtest {passed}/{total} (cases failed: {bad})',
                    metric=f'{REPORT_CELL["fail"]} {passed}/{total}')
 

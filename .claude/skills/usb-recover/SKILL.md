@@ -6,17 +6,26 @@ description: Use when a USB device or fixture on the ci HIL rig is stuck, hung, 
 # USB Recovery on the HIL Rig
 
 Run this skill's `scripts/usb_recover.sh` with `sudo` (abbreviated to
-`usb_recover.sh` in the examples below). It wraps four sysfs reset actions plus
-a resolver:
+`usb_recover.sh` in the examples below). It wraps the sysfs reset actions, a
+uhubctl power-cycle escalator, and a resolver:
 
 ```bash
 sudo usb_recover.sh resolve    /dev/ttyACM3    # /dev node -> busport (e.g. 3-4.7); also ttyUSB*, sg*
 sudo usb_recover.sh authorized <busport>       # deauthorize+reauthorize: re-enumerate, no VBUS cut
 sudo usb_recover.sh rebind     <busport>       # usb driver unbind+bind: re-probe
+sudo usb_recover.sh hub-cycle  <busport>       # uhubctl VBUS cycle of the feeding port, walking parent hub
+                                               # -> root port until the device re-enumerates
 sudo usb_recover.sh pci-rebind <pciaddr>       # whole HCD controller unbind+bind, e.g. 0000:02:00.0
 sudo usb_recover.sh pci-reset  <pciaddr>       # PCI function-level reset: kills URBs at HW level, no device lock
 sudo usb_recover.sh pci-bind   <pciaddr> [drv] # re-bind a DRIVERLESS controller (auto-tries xHCI drivers)
 ```
+
+`hub-cycle` caveats: leaf hubs that gang (or fake) port power switching bounce
+**all siblings** on that hub when cycled; a **self-powered** leaf hub keeps
+downstream VBUS up, so cycling it only resets its uplink — that's why the walk
+escalates to the root port, where the Renesas cards' per-port power (ppps) is
+real. A device that is wedged but bus-powered from a switching hub gets a true
+power cycle; one on a self-powered hub may only get a re-enumeration.
 
 ## Decide first: is anything stuck in D state?
 
@@ -37,8 +46,8 @@ the ioctl then returns and the convoy unwinds on its own.
 **Not every controller supports FLR.** The Renesas uPD720201 (`0000:01:00.0`)
 has no reset method — `pci-reset` fails with `Inappropriate ioctl for device`
 (ENOTTY). On those, there is no clean software D-state cure — a VM reboot is NOT
-reliable (the MosChip downstream hubs latch up across the PCIe reset and need a
-physical replug); ask the operator for a full PVE host power cycle instead. Do NOT
+reliable (downstream hubs can latch up across the PCIe reset and need a physical
+replug); ask the operator for a full PVE host power cycle instead. Do NOT
 fall through to `pci-rebind` (see next).
 
 **`pci-rebind` can strand the controller driverless.** Its unbind succeeds but,
@@ -62,7 +71,9 @@ needs: once a rebind has been attempted and is stuck, even FLR deadlocks and
 
 1. `authorized <busport>` — re-enumerates just that device
 2. `rebind <busport>` — re-probe; also worth trying on the parent hub's busport
-3. `pci-rebind <pciaddr>` — last resort: bounces every fixture on that controller
+3. `hub-cycle <busport>` — VBUS cycle of the feeding port, walking up to the
+   root port; may bounce sibling fixtures on ganged hubs
+4. `pci-rebind <pciaddr>` — last resort: bounces every fixture on that controller
 
 ## Finding targets
 
@@ -71,10 +82,13 @@ grep -l <SERIAL> /sys/bus/usb/devices/*/serial          # serial -> busport (dir
 readlink -f /sys/bus/usb/devices/usb<N>                  # bus N -> its PCI addr in the path
 ```
 
-Rig layout: buses 3+4 = `0000:02:00.0` (main fixture tree: J-Links, ST-Links,
-WCH-Links, DUTs); buses 9+12 = `0000:01:00.0`, the only ones with uhubctl port
-power (ganged VBUS: `sudo uhubctl -l 9 -a cycle`). Hubs on buses 1-4 have no
-port power switching — uhubctl reports "No compatible devices" there.
+Rig layout (2026-07-15, two Renesas uPD720201 cards; bus numbers renumber every
+boot — re-derive with `readlink`): AMD `0000:02:00.0` = the debug-probe tree
+(J-Links, ST-Links, WCH-Links), no port power switching; Renesas `0000:01:00.0`
+and `0000:03:00.0` = DUT device hubs + serial fixtures, and ALL their root-hub
+ports have real per-port power (`ppps`, 4+4 each) — `sudo uhubctl -l <bus> -p
+<port> -a cycle` cuts VBUS to the leaf hub on that port. The 1a40:0201 leaf
+hubs themselves claim "ganged" switching but do not actually cut power.
 
 ## Common mistakes
 
