@@ -19,6 +19,10 @@
 //--------------------------------------------------------------------+
 #define DCD_ENDPOINT_MAX 32
 
+// The iso machinery (5th DD word + packet-size memory) costs USB RAM on every build;
+// compile it only when a class that can open an iso endpoint is enabled.
+#define DCD_ISO_ENABLED (CFG_TUD_AUDIO || CFG_TUD_VIDEO || CFG_TUD_VENDOR)
+
 typedef struct TU_ATTR_ALIGNED(4)
 {
   //------------- Word 0 -------------//
@@ -48,11 +52,35 @@ typedef struct TU_ATTR_ALIGNED(4)
   volatile uint16_t present_count;  // For non-iso : The number of bytes transferred by the DMA engine
                                     // For iso : number of packets
 
+#if DCD_ISO_ENABLED
   //------------- Word 4 -------------//
-  //	uint32_t iso_packet_size_addr;		// iso only, can be omitted for non-iso
+  volatile uint32_t iso_packet_size_addr; // iso only: pointer into iso packet-size memory,
+                                          // advanced by hardware after each packet
+#endif
 }dma_desc_t;
 
-TU_VERIFY_STATIC( sizeof(dma_desc_t) == 16, "size is not correct"); // TODO not support ISO for now
+TU_VERIFY_STATIC( sizeof(dma_desc_t) == (DCD_ISO_ENABLED ? 20 : 16), "size is not correct");
+
+// Hardware fixes endpoint type by number: 3, 6, 9, 12 are the iso-capable ones.
+// Constant per ep_id (= 2*epnum + dir) — unlike dd->isochronous, which dcd_edpt_xfer
+// transiently zeroes while rebuilding the DD, this is safe to dispatch on from the ISR.
+TU_ATTR_ALWAYS_INLINE static inline bool ep_id_is_iso(uint8_t ep_id) {
+  uint8_t const epnum = (uint8_t)(ep_id >> 1);
+  return (epnum % 3) == 0 && (epnum != 0) && (epnum != 15);
+}
+
+#if DCD_ISO_ENABLED
+// Isochronous packet-size memory (UM10562 12.15.6.3): one word per packet.
+// IN : software fills Packet_length (bits 15:0), 0 = ZLP
+// OUT: hardware writes Frame_number (31:17) | Packet_valid (16) | Packet_length (15:0)
+// Iso-capable endpoint numbers are 3, 6, 9, 12 -> 8 slots (x2 directions).
+// One packet moves per FRAME, so a deep queue only adds latency: 8 frames is plenty.
+#define ISO_MAX_PACKETS 8
+#define ISO_SLOT_COUNT  8
+TU_ATTR_ALWAYS_INLINE static inline uint8_t iso_slot(uint8_t ep_id) {
+  return (uint8_t)(((ep_id / 6) - 1) * 2 + (ep_id & 1)); // ep_id = 2*epnum + dir, epnum in {3,6,9,12}
+}
+#endif
 
 typedef struct
 {
@@ -66,10 +94,16 @@ typedef struct
   {
     uint8_t* out_buffer;
     uint8_t  out_bytes;
+    volatile bool out_queued;   // an OUT xfer is queued; out_buffer may legitimately be NULL (status ZLP)
     volatile bool out_received; // indicate if data is already received in endpoint
 
     uint8_t  in_bytes;
   } control;
+
+#if DCD_ISO_ENABLED
+  // iso packet-size memory, must be DMA-reachable like the DDs
+  volatile uint32_t iso_psize[ISO_SLOT_COUNT][ISO_MAX_PACKETS];
+#endif
 
 } dcd_data_t;
 
@@ -79,6 +113,7 @@ CFG_TUD_MEM_SECTION TU_ATTR_ALIGNED(128) static dcd_data_t _dcd;
 //--------------------------------------------------------------------+
 // SIE Command
 //--------------------------------------------------------------------+
+
 static void sie_cmd_code (sie_cmdphase_t phase, uint8_t code_data)
 {
   LPC_USB->DevIntClr = (DEV_INT_COMMAND_CODE_EMPTY_MASK | DEV_INT_COMMAND_DATA_FULL_MASK);
@@ -294,7 +329,8 @@ bool dcd_edpt_open(uint8_t rhport, tusb_desc_endpoint_t const * p_endpoint_desc)
       break;
 
     case TUSB_XFER_ISOCHRONOUS:
-      TU_ASSERT((epnum % 3) == 0 && (epnum != 0) && (epnum != 15));
+      // iso machinery is compiled out when no iso-capable class is enabled
+      TU_ASSERT(DCD_ISO_ENABLED && (epnum % 3) == 0 && (epnum != 0) && (epnum != 15));
       break;
 
     default:
@@ -319,16 +355,54 @@ bool dcd_edpt_open(uint8_t rhport, tusb_desc_endpoint_t const * p_endpoint_desc)
 }
 
 bool dcd_edpt_iso_alloc(uint8_t rhport, uint8_t ep_addr, uint16_t largest_packet_size) {
+#if DCD_ISO_ENABLED
   (void)rhport;
-  (void)ep_addr;
-  (void)largest_packet_size;
+  uint8_t const ep_id = ep_addr2idx(ep_addr);
+
+  // hardware fixes iso to endpoint numbers 3, 6, 9, 12
+  TU_ASSERT(ep_id_is_iso(ep_id));
+  TU_ASSERT(largest_packet_size > 0);
+
+  set_ep_size(ep_id, largest_packet_size);
+
+  dma_desc_t* const dd = &_dcd.dd[ep_id];
+  tu_memclr(dd, sizeof(dma_desc_t));
+  dd->isochronous     = 1;
+  dd->max_packet_size = largest_packet_size;
+  dd->retired         = 1; // invalid at first
+
+  sie_write(SIE_CMDCODE_ENDPOINT_SET_STATUS + ep_id, 1, 0);
+  return true;
+#else
+  (void)rhport; (void)ep_addr; (void)largest_packet_size;
   return false;
+#endif
 }
 
 bool dcd_edpt_iso_activate(uint8_t rhport, const tusb_desc_endpoint_t *desc_ep) {
+#if DCD_ISO_ENABLED
   (void)rhport;
-  (void)desc_ep;
+  uint8_t const ep_id = ep_addr2idx(desc_ep->bEndpointAddress);
+  dma_desc_t* const dd = &_dcd.dd[ep_id];
+
+  // same fixed-number rule as alloc: without it a rejected-but-ignored alloc (classes
+  // discard that return) would set isochronous on a non-iso ep_id and underflow iso_slot()
+  TU_ASSERT(ep_id_is_iso(ep_id));
+
+  // kill any armed transfer from a previous alternate setting
+  LPC_USB->EpDMADis = TU_BIT(ep_id);
+  _dcd.udca[ep_id] = NULL;
+
+  dd->isochronous     = 1;
+  dd->max_packet_size = tu_edpt_packet_size(desc_ep);
+  dd->retired         = 1;
+
+  sie_write(SIE_CMDCODE_ENDPOINT_SET_STATUS + ep_id, 1, 0);
+  return true;
+#else
+  (void)rhport; (void)desc_ep;
   return false;
+#endif
 }
 
 void dcd_edpt_close_all (uint8_t rhport)
@@ -373,15 +447,17 @@ static bool control_xact(uint8_t rhport, uint8_t dir, uint8_t * buffer, uint8_t 
     {
       // Already received the DATA OUT packet
       _dcd.control.out_received = false;
-      _dcd.control.out_buffer = NULL;
-      _dcd.control.out_bytes  = 0;
 
       uint8_t received = control_ep_read(buffer, len);
       dcd_event_xfer_complete(0, 0, received, XFER_RESULT_SUCCESS, true);
     }else
     {
+      // buffer is NULL for a status-stage ZLP: signal the pending xfer explicitly,
+      // NOT via out_buffer != NULL — a NULL-buffer queue mistaken for "nothing queued"
+      // leaves out_received stale and poisons the next control OUT data stage.
       _dcd.control.out_buffer = buffer;
       _dcd.control.out_bytes  = len;
+      _dcd.control.out_queued = true;
     }
   }
 
@@ -406,26 +482,65 @@ bool dcd_edpt_xfer(uint8_t rhport, uint8_t ep_addr, uint8_t * buffer, uint16_t t
     uint16_t const ep_size = dd->max_packet_size;
     uint8_t  is_iso = dd->isochronous;
 
-    tu_memclr(dd, sizeof(dma_desc_t));
-    dd->isochronous = is_iso;
-    dd->max_packet_size = ep_size;
-    dd->buffer = (uint32_t) buffer;
-    dd->buflen = total_bytes;
-
-    _dcd.udca[ep_id] = dd;
-
-    if ( ep_id % 2 )
+#if DCD_ISO_ENABLED
+    if ( is_iso )
     {
-      // Clear EP interrupt before Enable DMA
-      LPC_USB->EpIntEn &= ~TU_BIT(ep_id);
-      LPC_USB->EpDMAEn = TU_BIT(ep_id);
+      // iso: buflen counts packets; per-packet sizes live in the packet-size memory.
+      // One packet moves per frame (UM10562 12.15.6: DMA request is raised for
+      // DMA-enabled iso endpoints on every FRAME interrupt, both directions).
+      // Validate BEFORE touching the DD: bailing out mid-rebuild would leave a
+      // zeroed (retired=0 -> serviceable) descriptor armed for the frame engine.
+      TU_ASSERT(ep_size > 0);
+      uint16_t const packets = (total_bytes > 0) ? (uint16_t) tu_div_ceil(total_bytes, ep_size) : 1;
+      TU_ASSERT(packets <= ISO_MAX_PACKETS);
 
-      // endpoint IN need to actively raise DMA request
-      LPC_USB->DMARSet = TU_BIT(ep_id);
-    }else
+      uint8_t const slot = iso_slot(ep_id);
+      uint16_t remain = total_bytes;
+      for ( uint16_t i = 0; i < packets; i++ )
+      {
+        uint16_t const pkt_len = tu_min16(remain, ep_size);
+        // IN: length to send (0 = ZLP). OUT: hardware writes back
+        // Frame_number|Packet_valid|Packet_length -- prefill 0 so a frame the
+        // hardware never wrote (missed/invalid) cannot read back as data.
+        _dcd.iso_psize[slot][i] = (ep_id & 1) ? pkt_len : 0;
+        remain = (uint16_t)(remain - pkt_len);
+      }
+
+      tu_memclr(dd, sizeof(dma_desc_t));
+      dd->isochronous = 1;
+      dd->max_packet_size = ep_size;
+      dd->buffer = (uint32_t) buffer;
+      dd->buflen = packets;
+      dd->iso_packet_size_addr = (uint32_t) &_dcd.iso_psize[slot][0];
+
+      _dcd.udca[ep_id] = dd;
+      LPC_USB->EpDMAEn = TU_BIT(ep_id); // frame-triggered: no DMARSet, no EpIntEn
+    }
+    else
+#else
+    (void) is_iso;
+#endif
     {
-      // Enable DMA
-      LPC_USB->EpDMAEn = TU_BIT(ep_id);
+      tu_memclr(dd, sizeof(dma_desc_t));
+      dd->max_packet_size = ep_size;
+      dd->buffer = (uint32_t) buffer;
+      dd->buflen = total_bytes;
+
+      _dcd.udca[ep_id] = dd;
+
+      if ( ep_id % 2 )
+      {
+        // Clear EP interrupt before Enable DMA
+        LPC_USB->EpIntEn &= ~TU_BIT(ep_id);
+        LPC_USB->EpDMAEn = TU_BIT(ep_id);
+
+        // endpoint IN need to actively raise DMA request
+        LPC_USB->DMARSet = TU_BIT(ep_id);
+      }else
+      {
+        // Enable DMA
+        LPC_USB->EpDMAEn = TU_BIT(ep_id);
+      }
     }
 
     return true;
@@ -451,13 +566,20 @@ static void control_xfer_isr(uint8_t rhport, uint32_t ep_int_status)
       uint8_t setup_packet[8];
       control_ep_read(setup_packet, 8); // TODO read before clear setup above
 
+      // a new SETUP voids any half-finished control state
+      _dcd.control.out_queued   = false;
+      _dcd.control.out_received = false;
+      _dcd.control.out_buffer   = NULL;
+      _dcd.control.out_bytes    = 0;
+
       dcd_event_setup_received(rhport, setup_packet, true);
     }
-    else if ( _dcd.control.out_buffer )
+    else if ( _dcd.control.out_queued )
     {
-      // software queued transfer previously
+      // software queued transfer previously (out_buffer NULL = status ZLP)
       uint8_t received = control_ep_read(_dcd.control.out_buffer, _dcd.control.out_bytes);
 
+      _dcd.control.out_queued = false;
       _dcd.control.out_buffer = NULL;
       _dcd.control.out_bytes = 0;
 
@@ -513,7 +635,32 @@ static void dd_complete_isr(uint8_t rhport, uint8_t ep_id)
   uint8_t result = (dd->status == DD_STATUS_NORMAL || dd->status == DD_STATUS_DATA_UNDERUN) ? XFER_RESULT_SUCCESS : XFER_RESULT_FAILED;
   uint8_t const ep_addr = (ep_id / 2) | ((ep_id & 0x01) ? TUSB_DIR_IN_MASK : 0);
 
-  dcd_event_xfer_complete(rhport, ep_addr, dd->present_count, result, true);
+  uint32_t xferred_bytes;
+#if DCD_ISO_ENABLED
+  if ( ep_id_is_iso(ep_id) )
+  {
+    // present_count is in packets; actual byte counts are in the packet-size memory
+    // (IN: as programmed by us, OUT: Packet_length written back by hardware,
+    //  guarded by Packet_valid -- a frame with no packet must count as 0)
+    uint8_t const slot = iso_slot(ep_id);
+    uint16_t const packets = tu_min16(dd->present_count, ISO_MAX_PACKETS);
+    xferred_bytes = 0;
+    for (uint16_t i = 0; i < packets; i++)
+    {
+      uint32_t const psize = _dcd.iso_psize[slot][i];
+      if ( (ep_id & 1) || (psize & TU_BIT(16)) )
+      {
+        xferred_bytes += (psize & 0xFFFFu);
+      }
+    }
+  }
+  else
+#endif
+  {
+    xferred_bytes = dd->present_count;
+  }
+
+  dcd_event_xfer_complete(rhport, ep_addr, (uint16_t) xferred_bytes, result, true);
 }
 
 // main USB IRQ handler
@@ -569,6 +716,16 @@ void dcd_int_handler(uint8_t rhport)
     {
       if ( tu_bit_test(eot, ep_id) )
       {
+        // dispatch on the hardware's fixed ep-number/type map, NOT dd->isochronous:
+        // thread-mode dcd_edpt_xfer transiently zeroes the DD while rebuilding it
+#if DCD_ISO_ENABLED
+        if ( ep_id_is_iso(ep_id) )
+        {
+          // iso: last packet already left with its frame; complete both directions here
+          dd_complete_isr(rhport, ep_id);
+        }
+        else
+#endif
         if ( ep_id & 0x01 )
         {
           // IN enable EpInt for end of usb transfer
