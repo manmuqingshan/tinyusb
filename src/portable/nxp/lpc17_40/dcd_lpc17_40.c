@@ -114,6 +114,28 @@ CFG_TUD_MEM_SECTION TU_ATTR_ALIGNED(128) static dcd_data_t _dcd;
 // SIE Command
 //--------------------------------------------------------------------+
 
+// The SIE command protocol (CmdCode + CCEMPTY/CDFULL handshake) and the
+// slave-mode Ctrl/RxData/TxData registers are shared between thread-mode API
+// calls and dcd_int_handler, and are not reentrant: an ISR preempting a
+// thread-mode SIE sequence consumes its handshake flags and overwrites
+// CmdCode (symptom: EP0 wedges/answers stale data right after SET_INTERFACE
+// stall/clear-stall bursts overlapping bulk EOT interrupts). Mask only the
+// USB interrupt around those sequences; safe to nest, including from the ISR.
+static inline bool usb_irq_lock(void)
+{
+  bool const enabled = NVIC_GetEnableIRQ(USB_IRQn) != 0;
+  if (enabled)
+  {
+    NVIC_DisableIRQ(USB_IRQn); // CMSIS already ends this with DSB+ISB
+  }
+  return enabled;
+}
+
+static inline void usb_irq_unlock(bool enabled)
+{
+  if (enabled) NVIC_EnableIRQ(USB_IRQn);
+}
+
 static void sie_cmd_code (sie_cmdphase_t phase, uint8_t code_data)
 {
   LPC_USB->DevIntClr = (DEV_INT_COMMAND_CODE_EMPTY_MASK | DEV_INT_COMMAND_DATA_FULL_MASK);
@@ -127,19 +149,28 @@ static void sie_cmd_code (sie_cmdphase_t phase, uint8_t code_data)
 
 static void sie_write (uint8_t cmd_code, uint8_t data_len, uint8_t data)
 {
+  bool const lock = usb_irq_lock();
+
   sie_cmd_code(SIE_CMDPHASE_COMMAND, cmd_code);
 
   if (data_len)
   {
     sie_cmd_code(SIE_CMDPHASE_WRITE, data);
   }
+
+  usb_irq_unlock(lock);
 }
 
 static uint8_t sie_read (uint8_t cmd_code)
 {
+  bool const lock = usb_irq_lock();
+
   sie_cmd_code(SIE_CMDPHASE_COMMAND , cmd_code);
   sie_cmd_code(SIE_CMDPHASE_READ    , cmd_code);
-  return (uint8_t) LPC_USB->CmdData;
+  uint8_t const data = (uint8_t) LPC_USB->CmdData;
+
+  usb_irq_unlock(lock);
+  return data;
 }
 
 //--------------------------------------------------------------------+
@@ -152,6 +183,11 @@ static inline uint8_t ep_addr2idx(uint8_t ep_addr)
 
 static void set_ep_size(uint8_t ep_id, uint16_t max_packet_size)
 {
+  // ReEp RMW + the EP_RLZED handshake share DevIntSt with the ISR: a bus reset
+  // from dcd_int_handler writes DevIntClr = 0xFFFFFFFF and would consume the
+  // flag this spin waits on, hanging it forever -> same lock as the SIE paths.
+  bool const lock = usb_irq_lock();
+
   // follows example in 11.10.4.2
   LPC_USB->ReEp    |= TU_BIT(ep_id);
   LPC_USB->EpInd    = ep_id; // select index before setting packet size
@@ -159,6 +195,8 @@ static void set_ep_size(uint8_t ep_id, uint16_t max_packet_size)
 
   while ((LPC_USB->DevIntSt & DEV_INT_ENDPOINT_REALIZED_MASK) == 0) {}
   LPC_USB->DevIntClr = DEV_INT_ENDPOINT_REALIZED_MASK;
+
+  usb_irq_unlock(lock);
 }
 
 
@@ -265,6 +303,7 @@ static inline uint8_t byte2dword(uint8_t bytes)
 static void control_ep_write(void const * buffer, uint8_t len)
 {
   uint32_t const * buf32 = (uint32_t const *) buffer;
+  bool const lock = usb_irq_lock(); // Ctrl/TxData + SIE sequence must not interleave with the ISR
 
   LPC_USB->Ctrl   = USBCTRL_WRITE_ENABLE_MASK; // logical endpoint = 0
   LPC_USB->TxPLen = (uint32_t) len;
@@ -280,10 +319,14 @@ static void control_ep_write(void const * buffer, uint8_t len)
   // select control IN & validate the endpoint
   sie_write(SIE_CMDCODE_ENDPOINT_SELECT+1, 0, 0);
   sie_write(SIE_CMDCODE_BUFFER_VALIDATE  , 0, 0);
+
+  usb_irq_unlock(lock);
 }
 
 static uint8_t control_ep_read(void * buffer, uint8_t len)
 {
+  bool const lock = usb_irq_lock(); // Ctrl/RxData + SIE sequence must not interleave with the ISR
+
   LPC_USB->Ctrl = USBCTRL_READ_ENABLE_MASK; // logical endpoint = 0
   while ((LPC_USB->RxPLen & USBRXPLEN_PACKET_READY_MASK) == 0) {} // TODO blocking, should have timeout
 
@@ -302,6 +345,7 @@ static uint8_t control_ep_read(void * buffer, uint8_t len)
   sie_write(SIE_CMDCODE_ENDPOINT_SELECT+0, 0, 0);
   sie_write(SIE_CMDCODE_BUFFER_CLEAR     , 0, 0);
 
+  usb_irq_unlock(lock);
   return len;
 }
 
@@ -443,13 +487,19 @@ static bool control_xact(uint8_t rhport, uint8_t dir, uint8_t * buffer, uint8_t 
     control_ep_write(buffer, len);
   }else
   {
+    // guard the out_received/out_buffer handshake against the EP0 OUT ISR
+    bool const lock = usb_irq_lock();
+
     if ( _dcd.control.out_received )
     {
       // Already received the DATA OUT packet
       _dcd.control.out_received = false;
 
       uint8_t received = control_ep_read(buffer, len);
+      // event queued with in_isr=true, which skips the queue's own locking: keep the
+      // USB IRQ masked across it, or a real ISR completion could interleave the write
       dcd_event_xfer_complete(0, 0, received, XFER_RESULT_SUCCESS, true);
+      usb_irq_unlock(lock);
     }else
     {
       // buffer is NULL for a status-stage ZLP: signal the pending xfer explicitly,
@@ -458,6 +508,7 @@ static bool control_xact(uint8_t rhport, uint8_t dir, uint8_t * buffer, uint8_t 
       _dcd.control.out_buffer = buffer;
       _dcd.control.out_bytes  = len;
       _dcd.control.out_queued = true;
+      usb_irq_unlock(lock);
     }
   }
 
@@ -531,8 +582,11 @@ bool dcd_edpt_xfer(uint8_t rhport, uint8_t ep_addr, uint8_t * buffer, uint16_t t
       if ( ep_id % 2 )
       {
         // Clear EP interrupt before Enable DMA
+        // EpIntEn read-modify-write races the ISR's own RMWs -> lock
+        bool const lock = usb_irq_lock();
         LPC_USB->EpIntEn &= ~TU_BIT(ep_id);
         LPC_USB->EpDMAEn = TU_BIT(ep_id);
+        usb_irq_unlock(lock);
 
         // endpoint IN need to actively raise DMA request
         LPC_USB->DMARSet = TU_BIT(ep_id);
