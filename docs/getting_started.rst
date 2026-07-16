@@ -181,7 +181,7 @@ Some examples require udev permissions to access USB devices:
 
 .. code-block:: bash
 
-   $ cp `examples/device/99-tinyusb.rules <https://github.com/hathach/tinyusb/tree/master/examples/device/99-tinyusb.rules>`_ /etc/udev/rules.d/
+   $ cp `examples/device/99-tinyusb-examples.rules <https://github.com/hathach/tinyusb/tree/master/examples/device/99-tinyusb-examples.rules>`_ /etc/udev/rules.d/
    $ sudo udevadm control --reload-rules && sudo udevadm trigger
 
 Next Steps
