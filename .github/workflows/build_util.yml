@@ -99,7 +99,7 @@ jobs:
         if: inputs.upload-artifacts == true && inputs.code-changed == true
         uses: actions/upload-artifact@v7
         with:
-          name: binaries-${{ matrix.arg }}
+          name: binaries-${{ inputs.toolchain }}-${{ matrix.arg }}
           path: |
             cmake-build/cmake-build-*/*/*/*.elf
             cmake-build/cmake-build-*/*/*/*.bin
