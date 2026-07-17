@@ -31,9 +31,11 @@ typedef struct {
   #if CFG_TUD_VENDOR_EP_ISO_OUT
   uint8_t  ep_iso_out;
   uint16_t iso_rx_xfer_len;
+  const tusb_desc_endpoint_t* iso_out_desc; // for deactivation on altsetting de-selection
   #endif
   #if CFG_TUD_VENDOR_EP_ISO_IN
   uint8_t  ep_iso_in;
+  const tusb_desc_endpoint_t* iso_in_desc; // for deactivation on altsetting de-selection
   #endif
   #if CFG_TUD_VENDOR_ALT_SETTINGS // implies non-buffered: fields cleared by bus reset
   uint8_t        cur_alt;
@@ -483,6 +485,21 @@ static inline bool vendord_iso_ep_alloc(uint8_t rhport, const tusb_desc_endpoint
   #endif
 }
 
+// Deactivate a de-selected altsetting's isochronous endpoint: abort any in-flight
+// transfer and release its usbd claim so a stale completion cannot fire into a
+// no-longer-tracked endpoint (iso cannot be stalled like bulk/interrupt below). With the
+// iso-alloc API, (re)activation with the endpoint's descriptor is the abort/scrub
+// primitive; without it, close does (the next selection re-opens).
+static inline void vendord_iso_ep_deactivate(uint8_t rhport, const tusb_desc_endpoint_t* desc_ep) {
+  if (desc_ep != NULL) {
+  #ifdef TUP_DCD_EDPT_ISO_ALLOC
+    usbd_edpt_iso_activate(rhport, desc_ep);
+  #else
+    usbd_edpt_close(rhport, desc_ep->bEndpointAddress);
+  #endif
+  }
+}
+
 // (Re)activate an isochronous endpoint on altsetting selection.
 static inline bool vendord_iso_ep_activate(uint8_t rhport, const tusb_desc_endpoint_t* desc_ep) {
   #ifdef TUP_DCD_EDPT_ISO_ALLOC
@@ -526,9 +543,9 @@ static bool vendord_set_alt(uint8_t rhport, uint8_t idx, uint8_t alt) {
       if (in_target_alt && !alt_found) {
         alt_found = true;
         // target altsetting confirmed present: abort then drop the previous altsetting's endpoints,
-        // so a bulk/interrupt endpoint absent from the target altsetting can't stay armed and keep
-        // its usbd claim in the dcd. (Endpoints the target altsetting reuses are reset again below;
-        // a double reset is harmless. Iso endpoints are re-activated on reselection.)
+        // so an endpoint absent from the target altsetting can't stay armed and keep its usbd
+        // claim in the dcd. (Endpoints the target altsetting reuses are reset again below;
+        // a double reset is harmless.)
         vendord_abort_ep(rhport, p_vendor->ep_in);
         vendord_abort_ep(rhport, p_vendor->ep_out);
   #if CFG_TUD_VENDOR_EP_INT_OUT
@@ -546,9 +563,13 @@ static bool vendord_set_alt(uint8_t rhport, uint8_t idx, uint8_t alt) {
         p_vendor->ep_int_in = 0;
   #endif
   #if CFG_TUD_VENDOR_EP_ISO_OUT
+        vendord_iso_ep_deactivate(rhport, p_vendor->iso_out_desc);
+        p_vendor->iso_out_desc = NULL;
         p_vendor->ep_iso_out = 0;
   #endif
   #if CFG_TUD_VENDOR_EP_ISO_IN
+        vendord_iso_ep_deactivate(rhport, p_vendor->iso_in_desc);
+        p_vendor->iso_in_desc = NULL;
         p_vendor->ep_iso_in = 0;
   #endif
       }
@@ -604,12 +625,14 @@ static bool vendord_set_alt(uint8_t rhport, uint8_t idx, uint8_t alt) {
           if (is_in) {
             TU_ASSERT(vendord_iso_ep_activate(rhport, desc_ep));
             p_vendor->ep_iso_in = ep_addr;
+            p_vendor->iso_in_desc = desc_ep; // points into p_itf_desc (static app descriptor)
           }
     #endif
     #if CFG_TUD_VENDOR_EP_ISO_OUT
           if (!is_in) {
             TU_ASSERT(vendord_iso_ep_activate(rhport, desc_ep));
             p_vendor->ep_iso_out = ep_addr;
+            p_vendor->iso_out_desc = desc_ep; // points into p_itf_desc (static app descriptor)
             p_vendor->iso_rx_xfer_len = tu_edpt_packet_size(desc_ep);
           }
     #endif
