@@ -376,7 +376,7 @@
 //------------ RUSB2 --------------//
 #if defined(TUP_USBIP_RUSB2)
   #define CFG_TUD_EDPT_DEDICATED_HWFIFO     1
-  #define CFG_TUSB_FIFO_HWFIFO_DATA_STRIDE  (2 | 4) // HS module uses 32-bit access at any link speed (e.g. FS-forced build)
+  #define CFG_TUSB_FIFO_HWFIFO_DATA_STRIDE  (2 | (TUD_OPT_HIGH_SPEED ? 4 : 0)) // 16 bit and 32 bit if highspeed
   #define CFG_TUSB_FIFO_HWFIFO_ADDR_STRIDE  0
   #define CFG_TUSB_FIFO_HWFIFO_CUSTOM_WRITE // custom write since rusb2 can change access width 32 -> 16 and can write
                                             // odd byte with byte access
