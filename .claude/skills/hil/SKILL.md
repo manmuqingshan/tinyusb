@@ -11,8 +11,14 @@ Run TinyUSB HIL tests on real boards. **Run `hostname` first** — it tells you 
 |------|--------------|------------------------|
 | `htpc` (dev PC) | `test/hil/local.json` | yes (large pool, `test/hil/tinyusb.json`) |
 | `ci` (the rig) | `test/hil/tinyusb.json` (large pool) | no — can't SSH to htpc, and boards are already local |
+| `hifiphile` (external rig) | `test/hil/hfp.json` | no outbound SSH to htpc/ci; SSH-reachable FROM both |
 
 Default to **local**. Use **remote** only when on `htpc` and the user says `remote`/`ci.lan`. Never attempt remote on `ci`.
+
+The `hifiphile` rig is externally hosted by TinyUSB maintainer hifiphile; its board pool is
+`test/hil/hfp.json` and its HIL runs are triggered by GitHub CI (the `hil-tinyusb (hfp.json)`
+matrix job). **Never run HIL against this rig during development unless the user explicitly
+asks for it.**
 
 ## Board locks — the CI runner keeps running
 
@@ -32,7 +38,6 @@ python3 test/hil/board_lock.py release BOARD [BOARD...]
 - Rig-wide operations (uhubctl power cycling, pci-rebind — bus renumbering) affect every board: `board_lock.py hold --all --reason "..."` first.
 - `board_lock.py status` lists holders. Locks auto-release when the holder process dies (kernel flock); `/tmp` clears on reboot.
 - Forcing past a lock: `HIL_NO_BOARD_LOCK=1 python3 test/hil/hil_test.py ...` bypasses the guard without killing the holder. Only with the user's explicit go-ahead — they accept the risk of colliding with whatever holds the board.
-- Caveat until this branch merges to master: CI's checkout of `hil_test.py` does not yet enforce locks — keep dev hardware sessions short and check `gh run list --status in_progress` first.
 
 ## Prerequisites
 

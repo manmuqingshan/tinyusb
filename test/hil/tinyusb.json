@@ -26,6 +26,7 @@
                     "device/cdc_msc_freertos",
                     "device/hid_composite_freertos",
                     "device/audio_test_freertos",
+                    "device/usbtest",
                     "host/device_info",
                     "host/msc_file_explorer_freertos"
                 ],
@@ -65,6 +66,7 @@
                     "device/cdc_msc_freertos",
                     "device/hid_composite_freertos",
                     "device/audio_test_freertos",
+                    "device/usbtest",
                     "host/device_info",
                     "host/msc_file_explorer_freertos"
                 ],
@@ -146,50 +148,6 @@
                 "name": "jlink",
                 "uid": "123456",
                 "args": "-device ATSAMD51J19"
-            }
-        },
-        {
-            "name": "mimxrt1015_evk",
-            "uid": "DC28F865D2111D228D00B0543A70463C",
-            "tests": {
-                "device": true,
-                "host": false,
-                "dual": false
-            },
-            "flasher": {
-                "name": "jlink",
-                "uid": "000726284213",
-                "args": "-device MIMXRT1015DAF5A"
-            }
-        },
-        {
-            "name": "mimxrt1064_evk",
-            "uid": "BAE96FB95AFA6DBB8F00005002001200",
-            "tests": {
-                "device": true,
-                "host": true,
-                "dual": true,
-                "dev_attached": [
-                    {
-                        "vid_pid": "10c4_ea60",
-                        "serial": "0001",
-                        "is_cdc": true,
-                        "comment": "cp2102"
-                    },
-                    {
-                        "vid_pid": "21c4_0cc7",
-                        "serial": "900058874D871F66",
-                        "is_msc": true,
-                        "block_size": 512,
-                        "block_count": 60620800,
-                        "msc_inquiry": "Lexar    USB Flash Drive  PMAP"
-                    }
-                ]
-            },
-            "flasher": {
-                "name": "jlink",
-                "uid": "000725299165",
-                "args": "-device MIMXRT1064xxx6A"
             }
         },
         {
@@ -379,13 +337,14 @@
                 "dual": false,
                 "dev_attached": [
                     {
-                        "vid_pid": "1a86_55d4",
-                        "serial": "52D2003414",
-                        "is_cdc": true
+                        "vid_pid": "10c4_ea60",
+                        "serial": "0001",
+                        "is_cdc": true,
+                        "comment": "cp2102"
                     },
                     {
                         "vid_pid": "21c4_0cc7",
-                        "serial": "90005893730A1A63",
+                        "serial": "900058874D871F66",
                         "is_msc": true,
                         "block_size": 512,
                         "block_count": 60620800,
@@ -495,6 +454,25 @@
             }
         },
         {
+            "name": "ch32v307v_r1_1v0",
+            "uid": "DE6B3E263B3857CAFFFFFFFF",
+            "toolchain": "riscv-gcc",
+            "variant": [
+                {"name": "ch32v307v_r1_1v0-usbhs", "defines": ["SPEED=high"]},
+                {"name": "ch32v307v_r1_1v0-usbfs", "defines": ["SPEED=full"]}
+            ],
+            "tests": {
+                "device": true,
+                "host": false,
+                "dual": false
+            },
+            "flasher": {
+                "name": "openocd_wch",
+                "uid": "BC5DA47360D0",
+                "args": ""
+            }
+        },
+        {
             "name": "ch582m_evt",
             "uid": "D443627B5450",
             "toolchain": "riscv-gcc",
@@ -508,9 +486,103 @@
                 "uid": "7FD88F0604B5",
                 "args": ""
             }
+        },
+        {
+            "name": "nrf5340dk",
+            "uid": "78E60E166B5F88BE",
+            "tests": {
+                "device": true,
+                "host": false,
+                "dual": false,
+                "skip": ["device/cdc_msc_freertos", "device/audio_test_freertos"],
+                "comment": "board new to HIL: FreeRTOS examples hardfault (UFSR=INVPC) at first task launch on the CM33_NTZ port - pre-existing upstream issue, non-FreeRTOS examples and usbtest pass; fix separately"
+            },
+            "flasher": {
+                "name": "jlink",
+                "uid": "001050076405",
+                "args": "-device NRF5340_XXAA_APP"
+            }
         }
     ],
     "boards-skip": [
+        {
+            "name": "mimxrt1064_evk",
+            "uid": "BAE96FB95AFA6DBB8F00005002001200",
+            "comment-skip": "device-port cable degraded from enum drops to killing the uPD720201 mid-battery (2026-07-17); replace the cable, verify enum, then move back",
+            "tests": {
+                "device": true,
+                "host": true,
+                "dual": true,
+                "dev_attached": [
+                    {
+                        "vid_pid": "1a86_55d4",
+                        "serial": "52D2003414",
+                        "is_cdc": true
+                    },
+                    {
+                        "vid_pid": "21c4_0cc7",
+                        "serial": "90005893730A1A63",
+                        "is_msc": true,
+                        "block_size": 512,
+                        "block_count": 60620800,
+                        "msc_inquiry": "Lexar    USB Flash Drive  PMAP"
+                    }
+                ]
+            },
+            "flasher": {
+                "name": "jlink",
+                "uid": "000725299165",
+                "args": "-device MIMXRT1064xxx6A"
+            }
+        },
+        {
+            "name": "nrf54lm20dk",
+            "uid": "899C3DE5B0F4D5CA",
+            "comment-skip": "J-Link probe fails most flashes (2026-07-16); replug/repair the probe, then move back",
+            "tests": {
+                "device": true,
+                "host": false,
+                "dual": false,
+                "skip": ["device/audio_test_freertos"],
+                "comment": "board new to HIL: audio_test_freertos never reaches dcd_init (FreeRTOS itself runs; cdc_msc_freertos and usbtest pass) - example-level issue on nRF54L, fix separately"
+            },
+            "flasher": {
+                "name": "jlink",
+                "uid": "1051856258",
+                "args": "-device NRF54LM20A_M33"
+            }
+        },
+        {
+            "name": "ra6m5_ek",
+            "uid": "8419032D32363657364EF4622D294B4E",
+            "tests": {
+                "device": true,
+                "host": false,
+                "dual": false,
+                "skip": ["device/cdc_msc_throughput", "device/msc_dual_lun"],
+                "comment": "MSC writes wedge the uPD720201 host (URBs queued, zero wire activity, bus-15 ctrl xfers time out until the device's URBs are killed); reproduced identically with master firmware - device side armed+BUF and exonerated. MSC reads and usbtest bulk (15.8 MB/s) are fine"
+            },
+            "flasher": {
+                "name": "jlink",
+                "uid": "000831915224",
+                "args": "-device R7FA6M5BH"
+            }
+        },
+        {
+            "name": "ra8m1_ek",
+            "uid": "797D142D36345030364E1737922E4B4E",
+            "comment": "USBHS bring-up pending (HS chirp completes digitally but terminations never switch; FS-forced build passed usbtest 30/30). Parked until fixed",
+            "tests": {
+                "device": true,
+                "host": false,
+                "dual": false
+            },
+            "flasher": {
+                "name": "jlink",
+                "uid": "001083115236",
+                "args": "-device R7FA8M1AH"
+            }
+        },
         {
             "name": "stm32f769disco",
             "uid": "21002F000F51363531383437",

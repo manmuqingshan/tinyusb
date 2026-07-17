@@ -29,7 +29,7 @@
 #include "usb_descriptors.h"
 
 #define USB_VID   0xCafe
-#define USB_PID   0x4005
+#define USB_PID   0x4019
 #define USB_BCD   0x0200
 
 //--------------------------------------------------------------------+

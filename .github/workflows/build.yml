@@ -274,11 +274,23 @@ jobs:
         toolchain:
           - 'arm-gcc'
           - 'riscv-gcc'
-          - 'esp-idf'
     with:
       build-system: 'cmake'
       toolchain: ${{ matrix.toolchain }}
       build-args: ${{ toJSON(fromJSON(needs.set-matrix.outputs.hil_json)[matrix.toolchain]) }}
+      upload-artifacts: true
+
+  # esp-idf builds are by far the slowest; keep them out of hil-build so the main
+  # hil-tinyusb run starts as soon as the fast toolchains finish (esp boards get
+  # their own hil-tinyusb-esp run gated only on this job)
+  hil-build-esp:
+    needs: [ check-paths, set-matrix ]
+    if: needs.check-paths.outputs.code_changed == 'true' && github.repository_owner == 'hathach'
+    uses: ./.github/workflows/build_util.yml
+    with:
+      build-system: 'cmake'
+      toolchain: 'esp-idf'
+      build-args: ${{ toJSON(fromJSON(needs.set-matrix.outputs.hil_json)['esp-idf']) }}
       upload-artifacts: true
 
   # ---------------------------------------
@@ -295,26 +307,36 @@ jobs:
           - display: tinyusb.json
             runner: [ self-hosted, X64, hathach, hardware-in-the-loop ]
             hil_json: test/hil/tinyusb.json
+            # esptool-flashed (espressif) boards run in hil-tinyusb-esp,
+            # gated on the slow esp-idf build
+            test_args: '--exclude-flasher esptool'
           - display: hfp.json
             runner: [ self-hosted, Linux, X64, hifiphile ]
             hil_json: test/hil/hfp.json
+            test_args: ''
     runs-on: ${{ matrix.runner }}
     env:
       HIL_JSON: ${{ matrix.hil_json }}
     steps:
-      - name: Set HIL report dir (sibling of workspace; persists across run attempts)
-        run: echo "HIL_REPORT_DIR=$(dirname "$GITHUB_WORKSPACE")/hil-report" >> "$GITHUB_ENV"
+      - name: Set HIL report dir (per run+job; persists across run attempts)
+        run: |
+          # one report dir per (run id, job): re-run attempts find their own report/spec,
+          # and interleaved runs of other PRs/jobs on the same runner cannot clobber them
+          BASE="$(dirname "$GITHUB_WORKSPACE")/hil-report"
+          # prune per-run dirs older than 2 weeks
+          find "$BASE" -mindepth 1 -maxdepth 1 -type d -mtime +14 -exec rm -rf {} + 2>/dev/null || true
+          echo "HIL_REPORT_DIR=$BASE/${GITHUB_RUN_ID}-$(basename "${{ matrix.display }}" .json)" >> "$GITHUB_ENV"
 
-      - name: Get Skip Boards from previous run
+      - name: Get re-run spec from previous attempt
         if: github.run_attempt != '1'
         run: |
-          if [ -f "${{ env.HIL_JSON }}.skip" ]; then
-            SKIP_BOARDS=$(cat "${{ env.HIL_JSON }}.skip")
-          else
-            SKIP_BOARDS=""
-          fi
-          echo "SKIP_BOARDS=$SKIP_BOARDS"
-          echo "SKIP_BOARDS=$SKIP_BOARDS" >> $GITHUB_ENV
+          # the report dir is keyed by run id, so a spec here can only have been
+          # written by an earlier attempt of THIS run
+          SPEC="$HIL_REPORT_DIR/$(basename "${{ env.HIL_JSON }}").failed"
+          RERUN_ARGS=""
+          [ -f "$SPEC" ] && RERUN_ARGS=$(cat "$SPEC")
+          echo "RERUN_ARGS=$RERUN_ARGS"
+          echo "RERUN_ARGS=$RERUN_ARGS" >> $GITHUB_ENV
 
       - name: Clean workspace
         run: |
@@ -333,21 +355,78 @@ jobs:
           merge-multiple: true
 
       - name: Test on actual hardware
-        run: |
-          python3 test/hil/hil_test.py ${{ env.HIL_JSON }} $SKIP_BOARDS || \
-          (if [ -f "${{ env.HIL_JSON }}.skip" ]; then
-            SKIP_BOARDS=$(cat "${{ env.HIL_JSON }}.skip")
-            echo "Re-running with SKIP_BOARDS=$SKIP_BOARDS"
-            python3 test/hil/hil_test.py ${{ env.HIL_JSON }} $SKIP_BOARDS
-          else
-            exit 1
-          fi)
+        # Single attempt per test (--retry 1), no in-run second pass: a broken fixture
+        # fails fast instead of holding the runner (and other PRs' HIL jobs) for hours.
+        run: python3 test/hil/hil_test.py --retry 1 ${{ matrix.test_args }} ${{ env.HIL_JSON }} $RERUN_ARGS
 
       - name: Upload HIL report
         if: always() && github.event_name == 'pull_request'
         uses: actions/upload-artifact@v7
         with:
           name: hil-report-${{ matrix.display }}
+          path: ${{ env.HIL_REPORT_DIR }}/hil_report.md
+          if-no-files-found: ignore
+          overwrite: true
+
+  # ---------------------------------------
+  # Hardware in the loop (HIL) - espressif boards only
+  # Same rig as hil-tinyusb (tinyusb.json) but gated only on the slow esp-idf build,
+  # so the main run does not wait for it. Per-board flocks arbitrate the shared rig;
+  # the runner has a single job slot, so the two HIL jobs never overlap - adding a
+  # second slot would double the per-controller flash/usbtest budgets.
+  # ---------------------------------------
+  hil-tinyusb-esp:
+    needs: hil-build-esp
+    name: hil-tinyusb (tinyusb-esp.json)
+    runs-on: [ self-hosted, X64, hathach, hardware-in-the-loop ]
+    env:
+      HIL_JSON: test/hil/tinyusb.json
+      TEST_ARGS: '--flasher esptool'
+    steps:
+      - name: Set HIL report dir (per run+job; persists across run attempts)
+        run: |
+          # one report dir per (run id, job): re-run attempts find their own report/spec,
+          # and interleaved runs of other PRs/jobs on the same runner cannot clobber them
+          BASE="$(dirname "$GITHUB_WORKSPACE")/hil-report"
+          # prune per-run dirs older than 2 weeks
+          find "$BASE" -mindepth 1 -maxdepth 1 -type d -mtime +14 -exec rm -rf {} + 2>/dev/null || true
+          echo "HIL_REPORT_DIR=$BASE/${GITHUB_RUN_ID}-tinyusb-esp" >> "$GITHUB_ENV"
+
+      - name: Get re-run spec from previous attempt
+        if: github.run_attempt != '1'
+        run: |
+          # the report dir is keyed by run id, so a spec here can only have been
+          # written by an earlier attempt of THIS run
+          SPEC="$HIL_REPORT_DIR/$(basename "${{ env.HIL_JSON }}").failed"
+          RERUN_ARGS=""
+          [ -f "$SPEC" ] && RERUN_ARGS=$(cat "$SPEC")
+          echo "RERUN_ARGS=$RERUN_ARGS"
+          echo "RERUN_ARGS=$RERUN_ARGS" >> $GITHUB_ENV
+
+      - name: Clean workspace
+        run: |
+          echo "Cleaning up for the first run"
+          rm -rf "${{ github.workspace }}"
+          mkdir -p "${{ github.workspace }}"
+
+      - name: Checkout TinyUSB
+        uses: actions/checkout@v6
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v5
+        with:
+          pattern: binaries-esp-idf-*
+          path: cmake-build
+          merge-multiple: true
+
+      - name: Test on actual hardware
+        run: python3 test/hil/hil_test.py --retry 1 $TEST_ARGS ${{ env.HIL_JSON }} $RERUN_ARGS
+
+      - name: Upload HIL report
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: hil-report-tinyusb-esp.json
           path: ${{ env.HIL_REPORT_DIR }}/hil_report.md
           if-no-files-found: ignore
           overwrite: true

@@ -26,7 +26,8 @@
 #include "bsp/board_api.h"
 #include "tusb.h"
 
-#define USB_PID           (0x4000 | ((CFG_TUD_CDC) ? (1 << 0) : 0) | ((CFG_TUD_MSC) ? (1 << 1) : 0))
+// Unique PID per example: guarantees re-enumeration on re-flash and a fresh host driver match.
+#define USB_PID           0x4009
 #define USB_VID           0xCafe
 #define USB_BCD           0x0200
 
