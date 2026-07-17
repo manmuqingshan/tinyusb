@@ -2158,7 +2158,10 @@ def accumulate_report(mret: list, report_dir: Path, fresh: bool) -> str:
     jpath = report_dir / REPORT_JSON
     if not fresh and jpath.is_file():
         try:
-            for entry in json.loads(jpath.read_text()).get('rows', []):
+            saved = json.loads(jpath.read_text())
+            # CI keys the report dir by run id, so the sidecar can only have been
+            # written by an earlier attempt of the same run
+            for entry in saved.get('rows', []):
                 acc[entry['board']] = [dict(entry['cells']), entry.get('duration')]
         except (ValueError, KeyError, TypeError):
             pass  # corrupt/old sidecar: start fresh
@@ -2272,11 +2275,11 @@ def main() -> None:
         print('-' * 30)
 
     # HIL report sidecar (hil_report.json/.md) and the .failed re-run spec live in
-    # report_dir (persists across CI run attempts). A full run starts fresh; a re-run
-    # (--accumulate / -bt, i.e. the .failed file) merges so already-passed boards/tests
-    # are preserved. Clear prior state up front on a fresh run so a crash mid-run can't
-    # leave a stale report - or worse, a stale re-run spec from another commit - to be
-    # consumed by a retry.
+    # report_dir (CI keys it by run id, so it persists across run attempts but is
+    # private to one run). A full run starts fresh; a re-run (--accumulate / -bt,
+    # i.e. the .failed file) merges so already-passed boards/tests are preserved.
+    # Clear prior state up front on a fresh run so a crash mid-run can't leave a
+    # stale report or re-run spec to be consumed by a retry.
     report_dir = Path(os.environ.get('HIL_REPORT_DIR', '.'))
     failed_fname = report_dir / (config_file.name + '.failed')
     fresh = not (args.accumulate or args.board_test)
@@ -2285,7 +2288,6 @@ def main() -> None:
         for f in (REPORT_JSON, REPORT_MD):
             (report_dir / f).unlink(missing_ok=True)
         failed_fname.unlink(missing_ok=True)
-        failed_fname.with_suffix(failed_fname.suffix + '.run').unlink(missing_ok=True)
 
     seed = os.getenv('HIL_SHUFFLE_SEED') or str(int(time.time()))
     log_line(f'test-order shuffle seed: {seed} (HIL_SHUFFLE_SEED={seed} to replay); '
@@ -2331,17 +2333,12 @@ def main() -> None:
                 parts.append(f'-b {name}')
                 if fts:
                     parts.append(f'-bt {name}:{",".join(fts)}')
-        stamp_fname = failed_fname.with_suffix(failed_fname.suffix + '.run')
         if len(parts) > 1:  # build-only failures have no boards to re-run
             report_dir.mkdir(parents=True, exist_ok=True)
             with failed_fname.open('w') as f:
                 f.write(' '.join(parts))
-            # CI stamps the spec with its run id: a later run's retry must not consume a
-            # spec left by an attempt of a DIFFERENT run (e.g. attempt 1 skipped entirely)
-            stamp_fname.write_text(os.environ.get('GITHUB_RUN_ID', ''))
         else:
             failed_fname.unlink(missing_ok=True)
-            stamp_fname.unlink(missing_ok=True)
 
     # refresh controller hints: pci resolved this run, plus board durations when the
     # full test list ran (a -t/-bt filtered run would understate the board's real cost)

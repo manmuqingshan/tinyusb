@@ -318,20 +318,23 @@ jobs:
     env:
       HIL_JSON: ${{ matrix.hil_json }}
     steps:
-      - name: Set HIL report dir (sibling of workspace; persists across run attempts)
-        run: echo "HIL_REPORT_DIR=$(dirname "$GITHUB_WORKSPACE")/hil-report" >> "$GITHUB_ENV"
+      - name: Set HIL report dir (per run+job; persists across run attempts)
+        run: |
+          # one report dir per (run id, job): re-run attempts find their own report/spec,
+          # and interleaved runs of other PRs/jobs on the same runner cannot clobber them
+          BASE="$(dirname "$GITHUB_WORKSPACE")/hil-report"
+          # prune per-run dirs older than 2 weeks
+          find "$BASE" -mindepth 1 -maxdepth 1 -type d -mtime +14 -exec rm -rf {} + 2>/dev/null || true
+          echo "HIL_REPORT_DIR=$BASE/${GITHUB_RUN_ID}-$(basename "${{ matrix.display }}" .json)" >> "$GITHUB_ENV"
 
       - name: Get re-run spec from previous attempt
         if: github.run_attempt != '1'
         run: |
-          # only honor a spec stamped by THIS run: a spec left by another run (attempt 1
-          # died or was skipped before hil_test.py could clear it) must not be consumed
+          # the report dir is keyed by run id, so a spec here can only have been
+          # written by an earlier attempt of THIS run
           SPEC="$HIL_REPORT_DIR/$(basename "${{ env.HIL_JSON }}").failed"
-          if [ -f "$SPEC" ] && [ "$(cat "$SPEC.run" 2>/dev/null)" = "$GITHUB_RUN_ID" ]; then
-            RERUN_ARGS=$(cat "$SPEC")
-          else
-            RERUN_ARGS=""
-          fi
+          RERUN_ARGS=""
+          [ -f "$SPEC" ] && RERUN_ARGS=$(cat "$SPEC")
           echo "RERUN_ARGS=$RERUN_ARGS"
           echo "RERUN_ARGS=$RERUN_ARGS" >> $GITHUB_ENV
 
@@ -380,20 +383,23 @@ jobs:
       HIL_JSON: test/hil/tinyusb.json
       TEST_ARGS: '--flasher esptool'
     steps:
-      - name: Set HIL report dir (sibling of workspace; persists across run attempts)
-        run: echo "HIL_REPORT_DIR=$(dirname "$GITHUB_WORKSPACE")/hil-report-esp" >> "$GITHUB_ENV"
+      - name: Set HIL report dir (per run+job; persists across run attempts)
+        run: |
+          # one report dir per (run id, job): re-run attempts find their own report/spec,
+          # and interleaved runs of other PRs/jobs on the same runner cannot clobber them
+          BASE="$(dirname "$GITHUB_WORKSPACE")/hil-report"
+          # prune per-run dirs older than 2 weeks
+          find "$BASE" -mindepth 1 -maxdepth 1 -type d -mtime +14 -exec rm -rf {} + 2>/dev/null || true
+          echo "HIL_REPORT_DIR=$BASE/${GITHUB_RUN_ID}-tinyusb-esp" >> "$GITHUB_ENV"
 
       - name: Get re-run spec from previous attempt
         if: github.run_attempt != '1'
         run: |
-          # only honor a spec stamped by THIS run: a spec left by another run (attempt 1
-          # died or was skipped before hil_test.py could clear it) must not be consumed
+          # the report dir is keyed by run id, so a spec here can only have been
+          # written by an earlier attempt of THIS run
           SPEC="$HIL_REPORT_DIR/$(basename "${{ env.HIL_JSON }}").failed"
-          if [ -f "$SPEC" ] && [ "$(cat "$SPEC.run" 2>/dev/null)" = "$GITHUB_RUN_ID" ]; then
-            RERUN_ARGS=$(cat "$SPEC")
-          else
-            RERUN_ARGS=""
-          fi
+          RERUN_ARGS=""
+          [ -f "$SPEC" ] && RERUN_ARGS=$(cat "$SPEC")
           echo "RERUN_ARGS=$RERUN_ARGS"
           echo "RERUN_ARGS=$RERUN_ARGS" >> $GITHUB_ENV
 
