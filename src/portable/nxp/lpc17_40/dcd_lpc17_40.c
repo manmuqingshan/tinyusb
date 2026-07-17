@@ -20,8 +20,10 @@
 #define DCD_ENDPOINT_MAX 32
 
 // The iso machinery (5th DD word + packet-size memory) costs USB RAM on every build;
-// compile it only when a class that can open an iso endpoint is enabled.
-#define DCD_ISO_ENABLED (CFG_TUD_AUDIO || CFG_TUD_VIDEO || CFG_TUD_VENDOR)
+// compile it only when a class that can open an iso endpoint is enabled. Keep this in
+// sync with the classes that actually arm an iso endpoint: audio, video, BTH (voice),
+// and vendor (its optional CFG_TUD_VENDOR_EP_ISO_* endpoints, exercised by usbtest).
+#define DCD_ISO_ENABLED (CFG_TUD_AUDIO || CFG_TUD_VIDEO || CFG_TUD_VENDOR || CFG_TUD_BTH)
 
 typedef struct TU_ATTR_ALIGNED(4)
 {
@@ -64,7 +66,9 @@ TU_VERIFY_STATIC( sizeof(dma_desc_t) == (DCD_ISO_ENABLED ? 20 : 16), "size is no
 // Hardware fixes endpoint type by number: 3, 6, 9, 12 are the iso-capable ones.
 // Constant per ep_id (= 2*epnum + dir) — unlike dd->isochronous, which dcd_edpt_xfer
 // transiently zeroes while rebuilding the DD, this is safe to dispatch on from the ISR.
-TU_ATTR_ALWAYS_INLINE static inline bool ep_id_is_iso(uint8_t ep_id) {
+// TU_ATTR_UNUSED: every caller is under #if DCD_ISO_ENABLED, so non-iso builds don't
+// reference it and clang -Wunused-function (fatal) would otherwise reject the build.
+TU_ATTR_UNUSED TU_ATTR_ALWAYS_INLINE static inline bool ep_id_is_iso(uint8_t ep_id) {
   uint8_t const epnum = (uint8_t)(ep_id >> 1);
   return (epnum % 3) == 0 && (epnum != 0) && (epnum != 15);
 }
@@ -360,8 +364,9 @@ bool dcd_edpt_open(uint8_t rhport, tusb_desc_endpoint_t const * p_endpoint_desc)
   uint8_t const epnum = tu_edpt_number(p_endpoint_desc->bEndpointAddress);
   uint8_t const ep_id = ep_addr2idx(p_endpoint_desc->bEndpointAddress);
 
-  // Endpoint type is fixed to endpoint number
-  // 1: interrupt, 2: Bulk, 3: Iso and so on
+  // Endpoint type is fixed to endpoint number (1 interrupt, 2 bulk, 3 iso, ...).
+  // Iso endpoints are armed via dcd_edpt_iso_alloc/activate, never through here
+  // (TUP_DCD_EDPT_ISO_ALLOC is defined for this IP), so only bulk/interrupt land here.
   switch ( p_endpoint_desc->bmAttributes.xfer )
   {
     case TUSB_XFER_INTERRUPT:
@@ -370,11 +375,6 @@ bool dcd_edpt_open(uint8_t rhport, tusb_desc_endpoint_t const * p_endpoint_desc)
 
     case TUSB_XFER_BULK:
       TU_ASSERT((epnum % 3) == 2 || (epnum == 15));
-      break;
-
-    case TUSB_XFER_ISOCHRONOUS:
-      // iso machinery is compiled out when no iso-capable class is enabled
-      TU_ASSERT(DCD_ISO_ENABLED && (epnum % 3) == 0 && (epnum != 0) && (epnum != 15));
       break;
 
     default:
@@ -387,9 +387,7 @@ bool dcd_edpt_open(uint8_t rhport, tusb_desc_endpoint_t const * p_endpoint_desc)
 
   //------------- first DD prepare -------------//
   dma_desc_t* const dd = &_dcd.dd[ep_id];
-  tu_memclr(dd, sizeof(dma_desc_t));
-
-  dd->isochronous = (p_endpoint_desc->bmAttributes.xfer == TUSB_XFER_ISOCHRONOUS) ? 1 : 0;
+  tu_memclr(dd, sizeof(dma_desc_t)); // non-iso: isochronous stays 0
   dd->max_packet_size = ep_size;
   dd->retired = 1; // invalid at first
 
