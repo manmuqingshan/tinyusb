@@ -31,50 +31,7 @@
 //--------------------------------------------------------------------+
 // MACRO TYPEDEF CONSTANT ENUM DECLARATION
 //--------------------------------------------------------------------+
-
-enum {
-  TOK_PID_OUT   = 0x1u,
-  TOK_PID_IN    = 0x9u,
-  TOK_PID_SETUP = 0xDu,
-  TOK_PID_DATA0 = 0x3u,
-  TOK_PID_DATA1 = 0xbu,
-  TOK_PID_ACK   = 0x2u,
-  TOK_PID_STALL = 0xeu,
-  TOK_PID_NAK   = 0xau,
-  TOK_PID_BUSTO = 0x0u,
-  TOK_PID_ERR   = 0xfu,
-};
-
-typedef struct TU_ATTR_PACKED
-{
-  union {
-    uint32_t head;
-    struct {
-      union {
-        struct {
-               uint16_t           :  2;
-          __IO uint16_t tok_pid   :  4;
-               uint16_t data      :  1;
-          __IO uint16_t own       :  1;
-               uint16_t           :  8;
-        };
-        struct {
-               uint16_t           :  2;
-               uint16_t bdt_stall :  1;
-               uint16_t dts       :  1;
-               uint16_t ninc      :  1;
-               uint16_t keep      :  1;
-               uint16_t           : 10;
-        };
-      };
-      __IO uint16_t bc : 10;
-           uint16_t    :  6;
-    };
-  };
-  uint8_t *addr;
-}buffer_descriptor_t;
-
-TU_VERIFY_STATIC( sizeof(buffer_descriptor_t) == 8, "size is not correct" );
+// TOK_PID_* and buffer_descriptor_t are shared with the device driver in ci_fs_type.h
 
 typedef struct TU_ATTR_PACKED
 {
@@ -115,7 +72,10 @@ typedef struct
   union {
     /* [OUT,IN][EVEN,ODD] */
     buffer_descriptor_t bdt[2][2];
-    uint16_t            bda[2*2];
+    /* bda aliases bdt for STAT-register indexing: STAT gives the byte-offset/2 of the
+     * completed BD, so it indexes bda[] in uint16_t units. Each buffer_descriptor_t is
+     * 4 uint16_t, hence 2*2*4 elements to span the whole table (must equal sizeof bdt). */
+    uint16_t            bda[2*2*4];
   };
   endpoint_state_t endpoint[2];
   pipe_state_t pipe[CFG_TUH_ENDPOINT_MAX * 2];
@@ -282,6 +242,22 @@ static void suspend_transfer(int pipenum, buffer_descriptor_t *bd)
   }
 }
 
+// Release the speculatively-armed sibling BDT of a multi-packet transfer.
+// prepare_packets arms the sibling (odd^1) BDT (own=1) so a multi-packet transfer can
+// ping-pong without NAKs. When the transfer ends - completes early on a short IN packet,
+// stalls/errors, or (for IN) is NAKed before the sibling's token is issued - that sibling
+// is left owned by the SIE. Because the host shares ONE BDT set across all pipes, a
+// leftover armed sibling blocks every other pipe forever (e.g. a 2nd device stuck
+// enumerating behind a hub). Release it - but ONLY for a multi-packet transfer: a
+// single-packet transfer never armed a sibling, so that BDT slot may legitimately belong
+// to another pipe's in-flight transfer.
+static inline void release_sibling_bd(unsigned s, const pipe_state_t *pipe)
+{
+  if (pipe->length > pipe->max_packet_size) {
+    ((buffer_descriptor_t *)&_hcd.bda[s ^ USB_STAT_ODD_MASK])->own = 0;
+  }
+}
+
 static void process_tokdne(uint8_t rhport)
 {
   (void)rhport;
@@ -316,6 +292,12 @@ static void process_tokdne(uint8_t rhport)
       result = XFER_RESULT_SUCCESS;
       break;
     case TOK_PID_NAK:
+      // Release the speculatively-armed sibling so the deferred retry (and any other pipe
+      // sharing the single BDT) can claim it; otherwise it stays own=1 forever and every
+      // same-direction transfer wedges. IN only: an IN issues just one token so the sibling
+      // was never put on the wire, whereas an OUT issues both tokens and its sibling may
+      // still be in flight - touching it there would race the SIE write-back.
+      if (TUSB_DIR_IN == dir_in) release_sibling_bd(s, &_hcd.pipe[pipenum]);
       suspend_transfer(pipenum, bd);
       next_pipenum = select_next_pipenum(pipenum);
       if (0 <= next_pipenum)
@@ -331,16 +313,7 @@ static void process_tokdne(uint8_t rhport)
   }
   _hcd.in_progress  &= ~TU_BIT(pipenum);
   pipe_state_t *pipe = &_hcd.pipe[ep->pipenum];
-  /* A multi-packet transfer speculatively arms the sibling (odd^1) BDT (see
-   * prepare_packets) to ping-pong without NAKs. When it ends early (a short IN packet)
-   * or fails, that sibling is still owned by the SIE; since the host shares a single
-   * BDT set across all pipes, a leftover armed sibling blocks every other pipe forever
-   * (e.g. a 2nd device stuck enumerating behind a hub). Release it - but ONLY for a
-   * multi-packet transfer: a single-packet transfer never armed a sibling, so that
-   * BDT slot may legitimately belong to another pipe's in-flight transfer. */
-  if (pipe->length > pipe->max_packet_size) {
-    ((buffer_descriptor_t *)&_hcd.bda[s ^ USB_STAT_ODD_MASK])->own = 0;
-  }
+  release_sibling_bd(s, pipe);
   hcd_event_xfer_complete(pipe->dev_addr,
                           tu_edpt_addr(CI_REG->TOKEN & USB_TOKEN_TOKENENDPT_MASK, dir_in),
                           pipe->length - pipe->remaining,
@@ -373,8 +346,11 @@ static void process_bus_reset(uint8_t rhport)
 
   _hcd.in_progress = 0;
   _hcd.pending     = 0;
+  // Clear the ENTIRE shared BDT (both directions, both even/odd). Clearing only the IN
+  // pair left a stale OUT/SETUP descriptor (own=1) after a disconnect mid-OUT, which then
+  // blocks the first control transfer on re-enumeration.
   buffer_descriptor_t *bd = &_hcd.bdt[0][0];
-  for (unsigned i = 0; i < 2; ++i, ++bd) {
+  for (unsigned i = 0; i < 2 * 2; ++i, ++bd) {
     bd->head = 0;
   }
 }

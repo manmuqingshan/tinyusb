@@ -163,14 +163,13 @@ size_t board_get_unique_id(uint8_t id[], size_t max_len) {
   (void) max_len;
   // Kinetis 128-bit Unique Identification Register (SIM->UIDH/UIDMH/UIDML/UIDL)
   uint32_t* id32 = (uint32_t*) (uintptr_t) id;
-  uint8_t const len = 16;
 
   id32[0] = SIM->UIDH;
   id32[1] = SIM->UIDMH;
   id32[2] = SIM->UIDML;
   id32[3] = SIM->UIDL;
 
-  return len;
+  return 16;
 }
 
 #if CFG_TUSB_OS == OPT_OS_NONE
