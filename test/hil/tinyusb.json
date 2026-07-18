@@ -1,6 +1,36 @@
 {
     "boards": [
         {
+            "name": "frdm_k64f",
+            "uid": "FFFF1A00FFFFFFFF1031454E0F000280",
+            "tests": {
+                "device": false,
+                "host": true,
+                "dual": false,
+                "dev_attached": [
+                    {
+                        "vid_pid": "1a86_55d4",
+                        "serial": "52D2023934",
+                        "is_cdc": true,
+                        "comment": "CH9102 USB-serial (TX-RX loopback)"
+                    },
+                    {
+                        "vid_pid": "21c4_0cc7",
+                        "serial": "9000588268687E25",
+                        "is_msc": true,
+                        "block_size": 512,
+                        "block_count": 60620800,
+                        "msc_inquiry": "Lexar    USB Flash Drive  PMAP"
+                    }
+                ]
+            },
+            "flasher": {
+                "name": "jlink",
+                "uid": "000621000000",
+                "args": "-device MK64FN1M0xxx12"
+            }
+        },
+        {
             "name": "ek_tm4c123gxl",
             "uid": "010105186C60A110",
             "tests": {
