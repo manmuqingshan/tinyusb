@@ -26,10 +26,10 @@ lsusb -d 6666:6620          # sniffer present? (github.com/ataradov/usb-sniffer)
 
 The sniffer is a passive tap: host-side and device-side connectors pass
 through, the capture port is a separate USB device. What it taps is a cabling
-fact you must confirm, not assume: start a capture (below), provoke known
-control traffic to a candidate (`lsusb -v -s <bus>:<dev> >/dev/null`), and
-see whether those requests appear on the wire. As of 2026-07 the sniffer is
-on htpc tapping the hub-3-2 upstream, with `mimxrt1010_evk` (HS) behind it.
+fact you must confirm every session, not assume: start a capture (below),
+provoke known control traffic to a candidate (`lsusb -v -s <bus>:<dev>
+>/dev/null`), and see whether those requests appear on the wire. The DUT's
+link speed (`cat /sys/bus/usb/devices/<port>/speed`) picks `--speed`.
 
 The tapped board is rig hardware: hold its board lock for any session that
 resets or reflashes it (`hil` skill). The sniffer itself is not lockable and
@@ -110,8 +110,7 @@ Filter analysis to the DUT: `-Y 'usbll.addr contains "4."'`.
 - **Port-reset visibility depends on the tap point.** Tapping the DUT's own
   cable: a reset reaches the sniffer PHY and you get explicit
   `--- Bus Reset ---` / `Detected speed:` Syslog records. Tapping a hub
-  upstream (current htpc wiring): the hub isolates the port reset — no
-  marker appears. Anchor reset timing on the hub choreography instead:
+  upstream: the hub isolates downstream port resets — no marker appears. Anchor reset timing on the hub choreography instead:
   SetPortFeature(PORT_RESET) to the hub's address = reset start,
   ClearPortFeature(C_PORT_RESET) = reset end (start the capture before
   triggering, or the initiating SetPortFeature is missing from the file).
@@ -121,17 +120,20 @@ Filter analysis to the DUT: `-Y 'usbll.addr contains "4."'`.
   not native FS packets. Tap the DUT's own cable and capture at `fs` for
   clean full-speed traffic.
 
-## One-time setup (already done on htpc)
+## Setup (one-time)
 
-udev rules (repo copy: `tools/88-tinyusb.rules` — the rig-only probe/analyzer
-allowlist, distinct from the user-facing `examples/device/99-tinyusb-examples.rules`;
-installed as `/etc/udev/rules.d/88-tinyusb.rules`; covers 6666:6620 + unconfigured
-FX2LP 04b4:8613 along with the rig's other boards/probes), binary from upstream `bin/` to
-`~/.local/bin/usb_sniffer`, extcap symlink into
-`~/.local/lib/wireshark/extcap/`. Wireshark ≥4.x decodes the payloads.
-The tool also has `--mcu-eeprom` / `--fpga-flash` / `--fpga-erase` firmware
-commands: those are for bringing up NEW sniffer hardware — never run them
-against the rig's working sniffer.
+```bash
+# udev: tools/88-tinyusb.rules covers 6666:6620 + blank FX2LP 04b4:8613
+sudo cp tools/88-tinyusb.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger -s usb
+
+# binary (ataradov repo bin/usb_sniffer_linux) + Wireshark extcap symlink (needs Wireshark >= 4.x)
+cp usb_sniffer_linux ~/.local/bin/usb_sniffer && chmod +x ~/.local/bin/usb_sniffer
+mkdir -p ~/.local/lib/wireshark/extcap
+ln -sf ~/.local/bin/usb_sniffer ~/.local/lib/wireshark/extcap/usb_sniffer
+```
+
+Never run `--mcu-eeprom` / `--fpga-flash` / `--fpga-erase` against a working sniffer — those program NEW hardware.
 
 ## Warnings
 
