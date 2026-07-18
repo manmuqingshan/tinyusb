@@ -1,5 +1,6 @@
+# udev rules for running the TinyUSB device examples as a non-root user.
 # Copy this file to the location of your distribution's udev rules, for example on Ubuntu:
-#   sudo cp 99-tinyusb.rules /etc/udev/rules.d/
+#   sudo cp 99-tinyusb-examples.rules /etc/udev/rules.d/
 # Then reload udev configuration by executing:
 #   sudo udevadm control --reload-rules
 #   sudo udevadm trigger
