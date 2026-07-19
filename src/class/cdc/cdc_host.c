@@ -715,18 +715,10 @@ bool cdch_xfer_cb(uint8_t daddr, uint8_t ep_addr, xfer_result_t event, uint32_t 
 // Enumeration
 //--------------------------------------------------------------------+
 
-  // Descriptor-walk hardening gated by CFG_TUH_VALIDATION_LEVEL: at NONE the guards collapse to a pass so
-  // trusted-device setups pay no code size; at BASIC (default) the walk stays inside the enumeration buffer.
-  #if CFG_TUH_VALIDATION_LEVEL >= TUSB_VALIDATION_BASIC
-    #define TU_DESC_VALIDATE(_cond) (_cond)
-  #else
-    #define TU_DESC_VALIDATE(_cond) (true)
-  #endif
-
 static bool open_ep_stream_pair(cdch_interface_t *p_cdc, tusb_desc_endpoint_t const *desc_ep) {
   for (size_t i = 0; i < 2; i++) {
     // pin bLength so tu_desc_next() below cannot walk the second endpoint past a caller-checked bound
-    TU_ASSERT(TU_DESC_VALIDATE(sizeof(tusb_desc_endpoint_t) == desc_ep->bLength) &&
+    TU_ASSERT(TUH_VALIDATE_BASIC(sizeof(tusb_desc_endpoint_t) == desc_ep->bLength) &&
                 TUSB_DESC_ENDPOINT == desc_ep->bDescriptorType && TUSB_XFER_BULK == desc_ep->bmAttributes.xfer,
               0);
     TU_ASSERT(tuh_edpt_open(p_cdc->daddr, desc_ep));
@@ -1024,7 +1016,7 @@ static uint16_t acm_open(uint8_t daddr, const tusb_desc_interface_t *itf_desc, u
   const uint8_t *p_desc   = (const uint8_t *)itf_desc;
   const uint8_t *desc_end = p_desc + max_len;
 
-  TU_ASSERT(TU_DESC_VALIDATE(tu_desc_len(p_desc) <= max_len), 0);
+  TU_ASSERT(TUH_VALIDATE_BASIC(tu_desc_len(p_desc) <= max_len), 0);
 
   cdch_interface_t *p_cdc = make_new_itf(daddr, itf_desc);
   TU_VERIFY(p_cdc, 0);
@@ -1036,11 +1028,13 @@ static uint16_t acm_open(uint8_t daddr, const tusb_desc_interface_t *itf_desc, u
   // Communication Functional Descriptors
   // need the 3-byte header (bLength/bDescriptorType/bDescriptorSubType) in bounds before reading it, and a
   // fully contained bLength >= 3 both keeps those reads valid and stops a zero-length descriptor from spinning
-  while ((p_desc < desc_end) && TU_DESC_VALIDATE((size_t)(desc_end - p_desc) >= 3) &&
-    TUSB_DESC_CS_INTERFACE == tu_desc_type(p_desc) && TU_DESC_VALIDATE(tu_desc_len(p_desc) >= 3) &&
-         TU_DESC_VALIDATE(tu_desc_len(p_desc) <= (size_t)(desc_end - p_desc))) {
+  while ((p_desc < desc_end) &&
+         TUH_VALIDATE_BASIC((size_t)(desc_end - p_desc) >= 3) &&
+         TUSB_DESC_CS_INTERFACE == tu_desc_type(p_desc) &&
+         TUH_VALIDATE_BASIC(tu_desc_len(p_desc) >= 3) &&
+         TUH_VALIDATE_BASIC(tu_desc_len(p_desc) <= (size_t)(desc_end - p_desc))) {
     if (CDC_FUNC_DESC_ABSTRACT_CONTROL_MANAGEMENT == cdc_functional_desc_typeof(p_desc) &&
-        TU_DESC_VALIDATE(tu_desc_len(p_desc) >= sizeof(cdc_desc_func_acm_t))) {
+        TUH_VALIDATE_BASIC(tu_desc_len(p_desc) >= sizeof(cdc_desc_func_acm_t))) {
       // save ACM bmCapabilities
       p_cdc->acm.capability = ((cdc_desc_func_acm_t const *) p_desc)->bmCapabilities;
     }
@@ -1051,7 +1045,7 @@ static uint16_t acm_open(uint8_t daddr, const tusb_desc_interface_t *itf_desc, u
   // Open notification endpoint of control interface if any
   if (itf_desc->bNumEndpoints == 1) {
     // whole endpoint descriptor must fit: tuh_edpt_open reads the full struct regardless of bLength
-    TU_ASSERT(TU_DESC_VALIDATE((size_t)(desc_end - p_desc) >= sizeof(tusb_desc_endpoint_t)), 0);
+    TU_ASSERT(TUH_VALIDATE_BASIC((size_t)(desc_end - p_desc) >= sizeof(tusb_desc_endpoint_t)), 0);
     TU_ASSERT(TUSB_DESC_ENDPOINT == tu_desc_type(p_desc), 0);
     const tusb_desc_endpoint_t *desc_ep = (const tusb_desc_endpoint_t *)p_desc;
     TU_ASSERT(tuh_edpt_open(daddr, desc_ep), 0);
@@ -1062,15 +1056,15 @@ static uint16_t acm_open(uint8_t daddr, const tusb_desc_interface_t *itf_desc, u
   }
 
   //------------- Data Interface (if any) -------------//
-  if (TU_DESC_VALIDATE((size_t)(desc_end - p_desc) >= sizeof(tusb_desc_interface_t)) &&
+  if (TUH_VALIDATE_BASIC((size_t)(desc_end - p_desc) >= sizeof(tusb_desc_interface_t)) &&
       TUSB_DESC_INTERFACE == tu_desc_type(p_desc)) {
     const tusb_desc_interface_t *data_itf = (const tusb_desc_interface_t *)p_desc;
     if (data_itf->bInterfaceClass == TUSB_CLASS_CDC_DATA) {
       p_desc += sizeof(tusb_desc_interface_t); // fixed struct size to endpoint descriptor, not device bLength
 
       // open_ep_stream_pair consumes exactly two endpoints; require that count and that both fit before reading them
-      TU_ASSERT(TU_DESC_VALIDATE(data_itf->bNumEndpoints == 2), 0);
-      TU_ASSERT(TU_DESC_VALIDATE((size_t)(desc_end - p_desc) >= 2 * sizeof(tusb_desc_endpoint_t)), 0);
+      TU_ASSERT(TUH_VALIDATE_BASIC(data_itf->bNumEndpoints == 2), 0);
+      TU_ASSERT(TUH_VALIDATE_BASIC((size_t)(desc_end - p_desc) >= 2 * sizeof(tusb_desc_endpoint_t)), 0);
       TU_ASSERT(open_ep_stream_pair(p_cdc, (const tusb_desc_endpoint_t *)p_desc), 0);
       p_desc += 2 * sizeof(tusb_desc_endpoint_t);
     }
