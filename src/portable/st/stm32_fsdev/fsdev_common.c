@@ -36,7 +36,7 @@ void fsdev_core_reset(void) {
 
   #if (CFG_TUSB_MCU == OPT_MCU_AT32F403A_407) || (CFG_TUSB_MCU == OPT_MCU_AT32F413)
   // Enable larger PMA area
-  CRM->misc1_bit.usbbufs = TRUE;
+  CRM->misc1_bit.usbbufs = 1;
   #endif
 }
 
