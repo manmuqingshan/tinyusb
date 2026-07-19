@@ -823,7 +823,8 @@ bool dcd_edpt_iso_alloc(uint8_t rhport, uint8_t ep_addr, uint16_t largest_packet
   pipe_state_t *pipe = pipe_get(epn, dir_in);
   pipe->mps = largest_packet_size;
   ep_csr->maxp_csr[is_rx].csrh = 0;
-  return hwfifo_config(musb, epn, is_rx, largest_packet_size, true);
+  TU_ASSERT(hwfifo_config(musb, epn, is_rx, largest_packet_size, true));
+  return true;
 }
 
 bool dcd_edpt_iso_activate(uint8_t rhport, tusb_desc_endpoint_t const *ep_desc ) {
